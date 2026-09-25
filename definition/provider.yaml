@@ -1,0 +1,11 @@
+# Provider identity and component definitions.
+# Edit this file to add or remove components.
+# Run `make generate` after making changes.
+
+name: opensearch
+
+# engine: OpenSearch nodes. In the standard topology every node is
+# cluster-manager eligible and holds data.
+components:
+  engine:
+    type: opensearch

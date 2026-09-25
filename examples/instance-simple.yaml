@@ -1,0 +1,17 @@
+# Minimal Instance: a 3-node OpenSearch cluster with the default version.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: opensearch-simple
+spec:
+  providerRef:
+    name: opensearch
+  components:
+    engine:
+      replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 4Gi
+      storage:
+        size: 10Gi

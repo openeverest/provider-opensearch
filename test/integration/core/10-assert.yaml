@@ -1,0 +1,37 @@
+# The OpenSearchCluster Sync() must produce for 10-create-instance.yaml.
+# Chainsaw asserts are partial: only the fields listed here are checked.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+  ownerReferences:
+    - apiVersion: core.openeverest.io/v1alpha1
+      kind: Instance
+      name: test-instance
+spec:
+  general:
+    serviceName: test-instance
+    version: 3.8.0
+    image: opensearchproject/opensearch:3.8.0
+    httpPort: 9200
+  security:
+    tls:
+      transport:
+        generate: true
+      http:
+        generate: true
+  nodePools:
+    - component: nodes
+      replicas: 1
+      diskSize: 10Gi
+      roles:
+        - cluster_manager
+        - data
+        - ingest
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi

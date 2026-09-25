@@ -1,0 +1,9 @@
+# Scaling the Instance must propagate to the node pool.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  nodePools:
+    - component: nodes
+      replicas: 3

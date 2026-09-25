@@ -1,0 +1,18 @@
+# Once the operator reports the cluster initialized and healthy, the Instance
+# must be Ready and publish its connection details.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready
+  connectionSecretRef:
+    name: test-instance-conn
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-instance-conn
+data:
+  port: OTIwMA==          # 9200
+  type: b3BlbnNlYXJjaA==  # opensearch

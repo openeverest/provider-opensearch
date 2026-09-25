@@ -1,0 +1,85 @@
+---
+# Core lifecycle suite: create, simulate operator readiness, scale, delete.
+#
+# The OpenSearch operator is not installed (see deploy-provider-ci), so the
+# suite simulates it by patching the OpenSearchCluster status and creating
+# the admin credentials secret the operator would generate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: core
+spec:
+  description: |
+    Lifecycle of an Instance: create, simulate operator readiness, scale,
+    and delete.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 100
+
+  steps:
+    - name: provider-deployed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    - name: instance-ready
+      try:
+        - script:
+            content: |
+              set -e
+              kubectl -n $NAMESPACE create secret generic test-instance-admin-password \
+                --from-literal=username=admin --from-literal=password=test-password
+              kubectl -n $NAMESPACE patch opensearchcluster/test-instance --subresource status --type merge \
+                -p '{"status":{"phase":"RUNNING","initialized":true,"health":"green","availableNodes":1,"componentsStatus":[]}}'
+        - assert:
+            file: 11-assert.yaml
+
+    - name: scale-up
+      try:
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                components:
+                  engine:
+                    replicas: 3
+        - assert:
+            file: 20-assert.yaml
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-instance
+        - wait:
+            apiVersion: opensearch.org/v1
+            kind: OpenSearchCluster
+            name: test-instance
+            timeout: 1m
+            for:
+              deletion: {}
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: test-instance-admin-password

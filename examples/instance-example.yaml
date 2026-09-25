@@ -1,0 +1,32 @@
+# Instance with every field the standard topology supports.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: opensearch-example
+spec:
+  providerRef:
+    name: opensearch
+  version: "3.8.0"
+  topology:
+    type: standard
+  components:
+    engine:
+      replicas: 3
+      resources:
+        requests:
+          cpu: "1"
+          memory: 4Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi
+      storage:
+        size: 50Gi
+        storageClass: standard
+      schedulingPolicy:
+        nodeSelector:
+          kubernetes.io/os: linux
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: opensearch
+            effect: NoSchedule
