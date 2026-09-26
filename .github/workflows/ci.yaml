@@ -31,6 +31,9 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.11.3
+          # Build the linter with the runner's Go; the prebuilt binary may be
+          # older than go.mod's Go version and refuse to load the config.
+          install-mode: goinstall
 
   build:
     name: Build

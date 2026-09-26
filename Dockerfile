@@ -1,5 +1,5 @@
 # Build the provider binary
-FROM golang:1.26 AS builder
+FROM golang:1.26.8 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 

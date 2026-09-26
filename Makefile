@@ -10,7 +10,7 @@ CONTAINER_TOOL ?= docker
 OPENEVEREST_BRANCH ?= main
 
 # Image URL to use for building/pushing image targets
-IMG ?= ghcr.io/openeverest/provider-opensearch-dev:latest
+IMG ?= ghcr.io/openeverest/provider-opensearch:latest
 
 # Image URL for OpenEverest controller used in integration tests (must be pre-built).
 OPENEVEREST_CONTROLLER_IMG ?= ghcr.io/openeverest/openeverest-controller-dev:0.0.0
