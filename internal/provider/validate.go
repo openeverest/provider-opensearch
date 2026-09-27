@@ -8,9 +8,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/utils/ptr"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-opensearch/internal/common"
@@ -70,7 +73,18 @@ func validate(c *controller.Context) error {
 		}
 	}
 
-	return validateAgainstExisting(c, engine.Storage.Size)
+	spec, err := c.ProviderSpec()
+	if err != nil {
+		return err
+	}
+	version := resolveVersion(spec, engine)
+	if version != "" {
+		if _, err := utilversion.ParseSemantic(version); err != nil {
+			return fmt.Errorf("%s: version %q is not a valid semantic version, e.g. 3.8.0", common.ComponentEngine, version)
+		}
+	}
+
+	return validateAgainstExisting(c, engine.Storage, version)
 }
 
 func validateName(name string) error {
@@ -83,8 +97,10 @@ func validateName(name string) error {
 	return nil
 }
 
-// validateAgainstExisting rejects changes the running cluster cannot take.
-func validateAgainstExisting(c *controller.Context, storageSize resource.Quantity) error {
+// validateAgainstExisting rejects changes the running cluster cannot take. The
+// operator's webhook enforces the same rules, but it needs cert-manager and is
+// disabled by default.
+func validateAgainstExisting(c *controller.Context, storage *corev1alpha1.Storage, version string) error {
 	existing := &opensearchv1.OpenSearchCluster{}
 	if err := c.Get(existing, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -93,11 +109,53 @@ func validateAgainstExisting(c *controller.Context, storageSize resource.Quantit
 		return fmt.Errorf("get existing OpenSearchCluster: %w", err)
 	}
 
+	if err := validateVersionChange(existing.Status.Version, version); err != nil {
+		return err
+	}
+
 	for _, pool := range existing.Spec.NodePools {
-		if pool.Component == nodePoolName && storageSize.Cmp(pool.DiskSize) < 0 {
-			return fmt.Errorf("%s: storage size cannot be decreased from %s to %s",
-				common.ComponentEngine, pool.DiskSize.String(), storageSize.String())
+		if pool.Component != nodePoolName {
+			continue
 		}
+		if storage.Size.Cmp(pool.DiskSize) < 0 {
+			return fmt.Errorf("%s: storage size cannot be decreased from %s to %s",
+				common.ComponentEngine, pool.DiskSize.String(), storage.Size.String())
+		}
+
+		var current *string
+		if pool.Persistence != nil && pool.Persistence.PVC != nil {
+			current = pool.Persistence.PVC.StorageClassName
+		}
+		if ptr.Deref(current, "") != ptr.Deref(storage.StorageClass, "") {
+			return fmt.Errorf("%s: storage class cannot be changed after creation (current: %q, requested: %q); keep %q",
+				common.ComponentEngine, ptr.Deref(current, ""), ptr.Deref(storage.StorageClass, ""), ptr.Deref(current, ""))
+		}
+	}
+	return nil
+}
+
+// validateVersionChange rejects downgrades and upgrades that skip a major
+// version. running is the version the operator reports; when it is empty the
+// cluster has not started yet and any version is accepted.
+func validateVersionChange(running, requested string) error {
+	if running == "" || requested == "" {
+		return nil
+	}
+	from, err := utilversion.ParseSemantic(running)
+	if err != nil {
+		return nil
+	}
+	to, err := utilversion.ParseSemantic(requested)
+	if err != nil {
+		return fmt.Errorf("%s: version %q is not a valid semantic version, e.g. 3.8.0", common.ComponentEngine, requested)
+	}
+	if to.LessThan(from) {
+		return fmt.Errorf("%s: version cannot be downgraded from %s to %s; choose %s or later",
+			common.ComponentEngine, running, requested, running)
+	}
+	if to.Major() > from.Major()+1 {
+		return fmt.Errorf("%s: cannot upgrade from %s to %s because it skips a major version; upgrade to a %d.x release first",
+			common.ComponentEngine, running, requested, from.Major()+1)
 	}
 	return nil
 }
