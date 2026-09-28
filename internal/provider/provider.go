@@ -11,6 +11,7 @@ import (
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-opensearch/internal/common"
@@ -57,12 +58,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 
 	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	version := engine.Version
-	if version == "" {
-		if v := controller.GetDefaultVersion(spec, common.ComponentTypeOpensearch); v != nil {
-			version = v.Version
-		}
-	}
+	version := resolveVersion(spec, engine)
 	image := engine.Image
 	if image == "" {
 		image = controller.GetImageForVersion(spec, common.ComponentEngine, version)
@@ -83,6 +79,18 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 
 	return c.Apply(cluster)
+}
+
+// resolveVersion returns the requested engine version, or the provider default
+// when the Instance does not set one.
+func resolveVersion(spec *corev1alpha1.ProviderSpec, engine corev1alpha1.ComponentSpec) string {
+	if engine.Version != "" {
+		return engine.Version
+	}
+	if v := controller.GetDefaultVersion(spec, common.ComponentTypeOpensearch); v != nil {
+		return v.Version
+	}
+	return ""
 }
 
 // Status translates the OpenSearchCluster status into the Instance status.
