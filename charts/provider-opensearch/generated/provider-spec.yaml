@@ -3,15 +3,16 @@
 spec:
   componentTypes:
     opensearch:
+      defaultVersion: 3.8.0
       versions:
         - image: opensearchproject/opensearch:3.7.0
           version: 3.7.0
-        - default: true
-          image: opensearchproject/opensearch:3.8.0
+        - image: opensearchproject/opensearch:3.8.0
           version: 3.8.0
   components:
     engine:
       type: opensearch
+  defaultVersion: 3.8.0
   release:
     version: 0.1.0
   topologies:
@@ -149,7 +150,6 @@ spec:
   versions:
     - components:
         engine: 3.8.0
-      default: true
       name: 3.8.0
     - components:
         engine: 3.7.0
