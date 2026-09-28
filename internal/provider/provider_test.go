@@ -42,10 +42,13 @@ func testProvider() *corev1alpha1.Provider {
 		ObjectMeta: metav1.ObjectMeta{Name: common.ProviderName},
 		Spec: corev1alpha1.ProviderSpec{
 			ComponentTypes: map[string]corev1alpha1.ComponentType{
-				common.ComponentTypeOpensearch: {Versions: []corev1alpha1.ComponentVersion{
-					{Version: "3.7.0", Image: "opensearchproject/opensearch:3.7.0"},
-					{Version: "3.8.0", Image: "opensearchproject/opensearch:3.8.0", Default: true},
-				}},
+				common.ComponentTypeOpensearch: {
+					DefaultVersion: "3.8.0",
+					Versions: []corev1alpha1.ComponentVersion{
+						{Version: "3.7.0", Image: "opensearchproject/opensearch:3.7.0"},
+						{Version: "3.8.0", Image: "opensearchproject/opensearch:3.8.0"},
+					},
+				},
 			},
 			Components: map[string]corev1alpha1.Component{
 				common.ComponentEngine: {Type: common.ComponentTypeOpensearch},
