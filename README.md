@@ -88,6 +88,10 @@ helm install provider-opensearch \
 
 - The OpenSearch operator (and its CRDs) is bundled as a chart dependency and is installed
   automatically. Set `operator.enabled=false` if the operator is already installed.
+- The operator image is pinned to `opensearchproject/opensearch-operator:3.0.0` in
+  [values.yaml](charts/provider-opensearch/values.yaml) rather than left to the subchart's
+  default, since that tag is not always published to Docker Hub by the time a chart version
+  references it. Bump `operator.manager.image.tag` once a newer tag is confirmed published.
 - The operator's validating webhooks are disabled by default because they require
   cert-manager; enable `operator.webhook.enabled` and `operator.webhook.certManager.enabled`
   together if cert-manager is available.
