@@ -90,7 +90,9 @@ helm install provider-opensearch \
   automatically. Set `operator.enabled=false` if the operator is already installed.
 - The operator's validating webhooks are disabled by default because they require
   cert-manager; enable `operator.webhook.enabled` and `operator.webhook.certManager.enabled`
-  together if cert-manager is available.
+  together if cert-manager is available. The provider's own `Validate` step rejects the same
+  unsafe changes (version downgrades, upgrades that skip a major version, storage class
+  changes) without them, so enabling the webhooks is defense-in-depth, not a requirement.
 
 Upgrade and uninstall:
 
@@ -167,7 +169,9 @@ operator generates per cluster (secret `<instance>-ca`).
 
 Source of truth: [definition/versions.yaml](definition/versions.yaml).
 
-Version upgrades are not exposed yet; see [ROADMAP.md](ROADMAP.md).
+Version upgrades are not exposed as a feature yet; see [ROADMAP.md](ROADMAP.md). `Validate`
+already rejects unsafe `spec.components.engine.version` changes (downgrades, upgrades that
+skip a major version) so a user cannot break a running cluster in the meantime.
 
 ## Configuration
 
@@ -184,6 +188,8 @@ Worth knowing:
 - **Instance name** — at most 36 characters, since the operator derives Kubernetes object
   names from it.
 - **Storage class** — cannot be changed after creation.
+- **Version changes** — downgrades and upgrades that skip a major version are rejected; see
+  [Versions](#versions).
 
 ## Development
 
