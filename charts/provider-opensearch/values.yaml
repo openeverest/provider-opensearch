@@ -172,6 +172,13 @@ operator:
   # -- The provider only uses the opensearch.org API group
   legacyAPI:
     enabled: false
+  manager:
+    image:
+      # (appVersion), since that tag is not always published yet — see
+      # https://github.com/openeverest/provider-opensearch/issues/1
+      repository: opensearchproject/opensearch-operator
+      tag: "3.0.0"
+      pullPolicy: IfNotPresent
   webhook:
     # -- The operator's validating webhooks require cert-manager; enable both
     # together if cert-manager is installed in the cluster
