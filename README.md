@@ -60,7 +60,7 @@ for what is planned next.
 | Provisioning | ✅ | `standard` topology |
 | Horizontal scaling | ✅ | `spec.components.engine.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources`; the JVM heap is half the memory request |
-| Version upgrades | ❌ | |
+| Version upgrades | ✅ | `spec.components.engine.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
 | Custom configuration | ❌ | |
 | Monitoring | ❌ | |
 | TLS | ✅ | Operator-generated certificates for transport and HTTP, always on |
@@ -169,9 +169,9 @@ operator generates per cluster (secret `<instance>-ca`).
 
 Source of truth: [definition/versions.yaml](definition/versions.yaml).
 
-Version upgrades are not exposed as a feature yet; see [ROADMAP.md](ROADMAP.md). `Validate`
-already rejects unsafe `spec.components.engine.version` changes (downgrades, upgrades that
-skip a major version) so a user cannot break a running cluster in the meantime.
+Change `spec.components.engine.version` on a running Instance to upgrade it; the operator
+performs a rolling upgrade. `Validate` rejects downgrades and upgrades that skip a major
+version.
 
 ## Configuration
 

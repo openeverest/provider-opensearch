@@ -168,7 +168,7 @@ removed on deletion — covered by CI.
 
 Most of these are natively handled by the operator; the provider work is mapping + validation.
 
-- [ ] **Version upgrades** — change `spec.version`; operator performs a rolling upgrade. Validate: no downgrade, no jump over more than one major version
+- [x] **Version upgrades** — change `spec.components.engine.version`; operator performs a rolling upgrade. Validate: no downgrade, no jump over more than one major version
 - [ ] **Storage expansion** — `engine.storage.size` increase → `diskSize`; validate StorageClass `allowVolumeExpansion`, keep the same unit (`Gi`)
 - [ ] **Custom configuration** — `engine.parameters.configuration` (`opensearch.yml` fragment) → `nodePools[].additionalConfig`; block keys the provider owns (TLS, security, discovery)
 - [ ] **Service exposure** — `engine.service` (`ClusterIP` / `LoadBalancer`, annotations, source ranges) → `general.annotations` / service type

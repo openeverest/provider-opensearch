@@ -214,6 +214,26 @@ func TestSync(t *testing.T) {
 		assert.Equal(t, "registry.local/opensearch:3.8.0", *got.Spec.General.Image)
 	})
 
+	t.Run("propagates a version upgrade to an existing cluster", func(t *testing.T) {
+		// Status.Version is what the operator reports once it has rolled the
+		// upgrade out; Spec.General.Version is what was last requested.
+		existing := &opensearchv1.OpenSearchCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace},
+			Spec:       opensearchv1.ClusterSpec{General: opensearchv1.GeneralConfig{Version: "3.7.0"}},
+			Status:     opensearchv1.ClusterStatus{Version: "3.7.0"},
+		}
+		engine := validEngine()
+		engine.Version = "3.8.0"
+		c, cl := newTestContext(t, testInstance(engine), existing)
+
+		require.NoError(t, New().Sync(c))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.Equal(t, "3.8.0", got.Spec.General.Version,
+			"Sync applies whatever version Validate accepted; the operator performs the rolling upgrade")
+	})
+
 	t.Run("keeps the operator finalizer", func(t *testing.T) {
 		existing := &opensearchv1.OpenSearchCluster{ObjectMeta: metav1.ObjectMeta{
 			Name: testName, Namespace: testNamespace, Finalizers: []string{"Opensearch"},
