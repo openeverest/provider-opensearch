@@ -6,9 +6,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
@@ -216,6 +218,95 @@ func TestValidateStorageClassChange(t *testing.T) {
 			}
 			assert.ErrorContains(t, err, tt.wantErr)
 			assert.ErrorContains(t, err, "keep")
+		})
+	}
+}
+
+func TestValidateStorageExpansion(t *testing.T) {
+	storageClass := func(name string, allowExpansion *bool, isDefault bool) *storagev1.StorageClass {
+		sc := &storagev1.StorageClass{
+			ObjectMeta:           metav1.ObjectMeta{Name: name},
+			AllowVolumeExpansion: allowExpansion,
+		}
+		if isDefault {
+			sc.Annotations = map[string]string{defaultStorageClassAnnotation: "true"}
+		}
+		return sc
+	}
+
+	tests := []struct {
+		name          string
+		requestedSize string
+		storageClass  *string
+		objs          []client.Object
+		wantErr       string
+	}{
+		{
+			name:          "expansion allowed",
+			requestedSize: "20Gi",
+			storageClass:  ptr.To("fast"),
+			objs:          []client.Object{storageClass("fast", ptr.To(true), false)},
+		},
+		{
+			name:          "expansion not allowed",
+			requestedSize: "20Gi",
+			storageClass:  ptr.To("fast"),
+			objs:          []client.Object{storageClass("fast", ptr.To(false), false)},
+			wantErr:       "does not allow volume expansion",
+		},
+		{
+			name:          "AllowVolumeExpansion unset defaults to false",
+			requestedSize: "20Gi",
+			storageClass:  ptr.To("fast"),
+			objs:          []client.Object{storageClass("fast", nil, false)},
+			wantErr:       "does not allow volume expansion",
+		},
+		{
+			name:          "storage class not found",
+			requestedSize: "20Gi",
+			storageClass:  ptr.To("ghost"),
+			wantErr:       "not found",
+		},
+		{
+			name:          "same size does not trigger the check",
+			requestedSize: "10Gi",
+			storageClass:  ptr.To("fast"),
+			objs:          []client.Object{storageClass("fast", ptr.To(false), false)},
+		},
+		{
+			name:          "default storage class allows expansion",
+			requestedSize: "20Gi",
+			storageClass:  nil,
+			objs:          []client.Object{storageClass("standard", ptr.To(true), true)},
+		},
+		{
+			name:          "default storage class disallows expansion",
+			requestedSize: "20Gi",
+			storageClass:  nil,
+			objs:          []client.Object{storageClass("standard", ptr.To(false), true)},
+			wantErr:       "does not allow volume expansion",
+		},
+		{
+			name:          "no default storage class resolvable does not block",
+			requestedSize: "20Gi",
+			storageClass:  nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := validEngine()
+			engine.Storage.Size = resource.MustParse(tt.requestedSize)
+			engine.Storage.StorageClass = tt.storageClass
+			objs := append([]client.Object{existingCluster("3.8.0", tt.storageClass)}, tt.objs...)
+			c, _ := newTestContext(t, testInstance(engine), objs...)
+
+			err := New().Validate(c)
+
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
 		})
 	}
 }

@@ -5,11 +5,13 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
@@ -130,8 +132,67 @@ func validateAgainstExisting(c *controller.Context, storage *corev1alpha1.Storag
 			return fmt.Errorf("%s: storage class cannot be changed after creation (current: %q, requested: %q); keep %q",
 				common.ComponentEngine, ptr.Deref(current, ""), ptr.Deref(storage.StorageClass, ""), ptr.Deref(current, ""))
 		}
+
+		if storage.Size.Cmp(pool.DiskSize) > 0 {
+			if err := validateStorageExpansion(c, current); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// validateStorageExpansion rejects a storage increase when the StorageClass
+// does not support it. className is nil when the PVC uses the cluster's
+// default StorageClass.
+//
+// StorageClass is cluster-scoped, so this goes through c.Client() directly:
+// c.Get/c.List always scope to the Instance's namespace, which would never
+// match a cluster-scoped object.
+func validateStorageExpansion(c *controller.Context, className *string) error {
+	var sc *storagev1.StorageClass
+	if name := ptr.Deref(className, ""); name != "" {
+		sc = &storagev1.StorageClass{}
+		if err := c.Client().Get(c.Context(), client.ObjectKey{Name: name}, sc); err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("%s: storage class %q not found", common.ComponentEngine, name)
+			}
+			return fmt.Errorf("get storage class %q: %w", name, err)
+		}
+	} else {
+		var err error
+		if sc, err = defaultStorageClass(c); err != nil {
+			return err
+		}
+		if sc == nil {
+			// The default StorageClass could not be resolved; don't block an
+			// increase over something we can't verify.
+			return nil
+		}
+	}
+
+	if !ptr.Deref(sc.AllowVolumeExpansion, false) {
+		return fmt.Errorf("%s: storage class %q does not allow volume expansion; storage size cannot be increased",
+			common.ComponentEngine, sc.Name)
+	}
+	return nil
+}
+
+// defaultStorageClassAnnotation marks the cluster's default StorageClass.
+// See https://kubernetes.io/docs/concepts/storage/storage-classes/#default-storageclass
+const defaultStorageClassAnnotation = "storageclass.kubernetes.io/is-default-class"
+
+func defaultStorageClass(c *controller.Context) (*storagev1.StorageClass, error) {
+	list := &storagev1.StorageClassList{}
+	if err := c.Client().List(c.Context(), list); err != nil {
+		return nil, fmt.Errorf("list storage classes: %w", err)
+	}
+	for i := range list.Items {
+		if list.Items[i].Annotations[defaultStorageClassAnnotation] == "true" {
+			return &list.Items[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // validateVersionChange rejects downgrades and upgrades that skip a major

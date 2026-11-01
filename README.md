@@ -70,7 +70,7 @@ Stateful workloads additionally report:
 | Capability | Status | Notes |
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage`; volumes are deleted with the Instance |
-| Storage expansion | ❌ | |
+| Storage expansion | ✅ | `spec.components.engine.storage.size`; rejected when the StorageClass does not allow expansion |
 | Backups (on demand) | ❌ | |
 | Backups (scheduled) | ❌ | |
 | Restore | ❌ | |
@@ -187,7 +187,8 @@ Worth knowing:
   to the limits when only limits are set; the minimum is `2Gi`.
 - **Instance name** — at most 36 characters, since the operator derives Kubernetes object
   names from it.
-- **Storage class** — cannot be changed after creation.
+- **Storage class** — cannot be changed after creation. A size increase is rejected if the
+  class's `allowVolumeExpansion` is not `true`.
 - **Version changes** — downgrades and upgrades that skip a major version are rejected; see
   [Versions](#versions).
 

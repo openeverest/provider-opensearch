@@ -19,3 +19,5 @@ package provider
 // =============================================================================
 // +kubebuilder:rbac:groups=opensearch.org,resources=opensearchclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=opensearch.org,resources=opensearchclusters/status,verbs=get
+// Validate reads the StorageClass to check allowVolumeExpansion before accepting a storage increase.
+// +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
