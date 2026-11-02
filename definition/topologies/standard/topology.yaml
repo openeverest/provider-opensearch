@@ -20,6 +20,7 @@ config:
           storage: {}
           resources: {}
           replicas: {minimum: 1}
+          service: {}
           # schedulerName is omitted: OpenSearchCluster node pools cannot set it.
           schedulingPolicy:
             properties:
@@ -146,9 +147,26 @@ ui:
             multiline: true
             minRows: 3
             maxRows: 8
+        externalAccess:
+          uiType: select
+          path: spec.components.engine.service.serviceType
+          fieldParams:
+            label: "External access"
+            defaultValue: "ClusterIP"
+            options:
+              - label: "ClusterIP"
+                value: "ClusterIP"
+              - label: "LoadBalancer"
+                value: "LoadBalancer"
+              - label: "NodePort"
+                value: "NodePort"
+            # TODO: Support Service annotation and LoadBalancer source ranges configuration
+            # https://github.com/openeverest/openeverest/issues/1959
+            # https://github.com/openeverest/openeverest/issues/2398
       componentsOrder:
         - storageClass
         - configuration
+        - externalAccess
   sectionsOrder:
     - databaseVersion
     - resources

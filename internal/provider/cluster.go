@@ -62,6 +62,9 @@ func buildClusterSpec(name string, engine corev1alpha1.ComponentSpec, version, i
 	if image != "" {
 		general.ImageSpec = &opensearchv1.ImageSpec{Image: &image}
 	}
+	if engine.Service != nil {
+		general.Annotations = engine.Service.Annotations
+	}
 
 	return opensearchv1.ClusterSpec{
 		General: general,

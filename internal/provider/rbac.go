@@ -21,3 +21,6 @@ package provider
 // +kubebuilder:rbac:groups=opensearch.org,resources=opensearchclusters/status,verbs=get
 // Validate reads the StorageClass to check allowVolumeExpansion before accepting a storage increase.
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
+// The operator's own service is always ClusterIP; the provider manages a separate
+// Service directly for LoadBalancer/NodePort access.
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete

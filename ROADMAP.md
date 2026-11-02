@@ -171,7 +171,7 @@ Most of these are natively handled by the operator; the provider work is mapping
 - [x] **Version upgrades** — change `spec.components.engine.version`; operator performs a rolling upgrade. Validate: no downgrade, no jump over more than one major version
 - [x] **Storage expansion** — `engine.storage.size` increase → `diskSize`; validate StorageClass `allowVolumeExpansion`, keep the same unit (`Gi`)
 - [x] **Custom configuration** — `engine.parameters.configuration` (`opensearch.yml` fragment) → `nodePools[].additionalConfig`; block keys the provider owns (TLS, security, discovery)
-- [ ] **Service exposure** — `engine.service` (`ClusterIP` / `LoadBalancer`, annotations, source ranges) → `general.annotations` / service type
+- [x] **Service exposure** — `engine.service`: annotations map onto `general.annotations` on the operator's own service (always `ClusterIP`, no field to change that). `serviceType: LoadBalancer`/`NodePort` and `loadBalancerService.sourceRanges` are served by a separate `<name>-exposed` Service the provider manages directly, selecting the same pods — the operator has no field for this (its own `NewNodePortService` builder exists but is never wired into its reconciler)
 - [ ] **Dashboards** — optional `dashboards` component (type `dashboards`, image `opensearchproject/opensearch-dashboards`, version pinned in the same bundle as the engine): replicas, resources, service exposure, generated TLS
 - [ ] Plugins list parameter (`general.pluginsList`) — curated, since plugins are downloaded at pod start
 - [ ] Chainsaw suites: upgrade, storage expansion, dashboards
@@ -181,6 +181,7 @@ Most of these are natively handled by the operator; the provider work is mapping
 | Version upgrades | ✅ |
 | Storage expansion | ✅ |
 | Custom configuration | ✅ |
+| Service exposure | ✅ |
 
 ---
 

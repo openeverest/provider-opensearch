@@ -37,6 +37,7 @@ spec:
                     nodeSelector: {}
                     tolerations: {}
                     topologySpreadConstraints: {}
+                service: {}
                 storage: {}
               required:
                 - storage
@@ -55,6 +56,19 @@ spec:
                   cluster.routing.allocation.disk.threshold_enabled: false
               path: spec.components.engine.parameters.configuration
               uiType: text
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.engine.service.serviceType
+              uiType: select
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -72,6 +86,7 @@ spec:
           componentsOrder:
             - storageClass
             - configuration
+            - externalAccess
           description: Configure advanced settings for your OpenSearch cluster
           label: Advanced configuration
         databaseVersion:

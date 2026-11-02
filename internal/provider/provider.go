@@ -83,7 +83,11 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	return c.Apply(cluster)
+	if err := c.Apply(cluster); err != nil {
+		return err
+	}
+
+	return syncExposedService(c, engine)
 }
 
 // resolveVersion returns the requested engine version, or the provider default

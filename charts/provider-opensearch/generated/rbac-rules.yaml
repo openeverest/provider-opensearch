@@ -11,6 +11,7 @@
     - ""
   resources:
     - secrets
+    - services
   verbs:
     - create
     - delete

@@ -90,6 +90,10 @@ func validate(c *controller.Context) error {
 		return err
 	}
 
+	if err := validateServiceType(engine.Service); err != nil {
+		return err
+	}
+
 	return validateAgainstExisting(c, engine.Storage, version)
 }
 

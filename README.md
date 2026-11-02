@@ -62,6 +62,7 @@ for what is planned next.
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources`; the JVM heap is half the memory request |
 | Version upgrades | ✅ | `spec.components.engine.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration`; an `opensearch.yml` fragment (YAML), merged into `additionalConfig`. TLS, security plugin, and discovery keys are rejected |
+| External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service |
 | Monitoring | ❌ | |
 | TLS | ✅ | Operator-generated certificates for transport and HTTP, always on |
 
@@ -197,6 +198,12 @@ Worth knowing:
   `cluster.routing.allocation.disk.threshold_enabled`). List-valued keys are rejected, as are
   keys under `plugins.security.` (TLS and the security plugin) and `discovery.`, which the
   provider and operator manage.
+- **External access** — the OpenSearch operator's own service is always `ClusterIP`; it has no
+  field to change that. Setting `spec.components.engine.service.serviceType` to `LoadBalancer`
+  or `NodePort` makes the provider create and manage a second service, `<name>-exposed`,
+  pointing at the same pods, exposing only the REST API port (9200). Annotations
+  (`service.annotations`) are applied to the operator's main service regardless of type.
+  Reverting to `ClusterIP` (or unsetting `service`) removes the `<name>-exposed` service.
 
 ## Development
 
