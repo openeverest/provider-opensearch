@@ -11,6 +11,12 @@ spec:
           version: 3.8.0
   components:
     engine:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            configuration:
+              type: string
+          type: object
       type: opensearch
   defaultVersion: 3.8.0
   release:
@@ -39,6 +45,16 @@ spec:
       sections:
         advanced:
           components:
+            configuration:
+              fieldParams:
+                label: opensearch.yml
+                maxRows: 8
+                minRows: 3
+                multiline: true
+                placeholder: |
+                  cluster.routing.allocation.disk.threshold_enabled: false
+              path: spec.components.engine.parameters.configuration
+              uiType: text
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -53,6 +69,9 @@ spec:
               uiType: select
               validation:
                 required: true
+          componentsOrder:
+            - storageClass
+            - configuration
           description: Configure advanced settings for your OpenSearch cluster
           label: Advanced configuration
         databaseVersion:

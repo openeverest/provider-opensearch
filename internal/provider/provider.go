@@ -64,9 +64,14 @@ func (p *Provider) Sync(c *controller.Context) error {
 		image = controller.GetImageForVersion(spec, common.ComponentEngine, version)
 	}
 
+	additionalConfig, err := resolveAdditionalConfig(c, engine)
+	if err != nil {
+		return err
+	}
+
 	cluster := &opensearchv1.OpenSearchCluster{
 		ObjectMeta: c.ObjectMeta(c.Name()),
-		Spec:       buildClusterSpec(c.Name(), engine, version, image),
+		Spec:       buildClusterSpec(c.Name(), engine, version, image, additionalConfig),
 	}
 
 	// Apply replaces metadata wholesale; keep the operator's finalizer so it

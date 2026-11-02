@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -101,6 +103,19 @@ func TestValidate(t *testing.T) {
 				in.Spec.Components["engine"] = e
 			},
 			wantErr: "cpu",
+		},
+		{
+			name: "blocked configuration key",
+			mutate: func(in *corev1alpha1.Instance) {
+				e := in.Spec.Components["engine"]
+				raw, err := json.Marshal(map[string]string{"configuration": "discovery.type: single-node\n"})
+				if err != nil {
+					panic(err)
+				}
+				e.Parameters = &runtime.RawExtension{Raw: raw}
+				in.Spec.Components["engine"] = e
+			},
+			wantErr: "is managed by the provider",
 		},
 	}
 	for _, tt := range tests {

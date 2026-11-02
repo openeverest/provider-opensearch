@@ -136,6 +136,19 @@ ui:
             required: true
           dataSource:
             provider: storageClasses
+        configuration:
+          uiType: text
+          path: spec.components.engine.parameters.configuration
+          fieldParams:
+            label: "opensearch.yml"
+            placeholder: |2
+              cluster.routing.allocation.disk.threshold_enabled: false
+            multiline: true
+            minRows: 3
+            maxRows: 8
+      componentsOrder:
+        - storageClass
+        - configuration
   sectionsOrder:
     - databaseVersion
     - resources

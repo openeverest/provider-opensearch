@@ -86,6 +86,10 @@ func validate(c *controller.Context) error {
 		}
 	}
 
+	if _, err := resolveAdditionalConfig(c, engine); err != nil {
+		return err
+	}
+
 	return validateAgainstExisting(c, engine.Storage, version)
 }
 

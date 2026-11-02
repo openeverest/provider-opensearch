@@ -97,7 +97,7 @@ func TestBuildClusterSpec(t *testing.T) {
 	engine := validEngine()
 	engine.Storage.StorageClass = ptr.To("fast")
 
-	spec := buildClusterSpec(testName, engine, "3.8.0", "opensearchproject/opensearch:3.8.0")
+	spec := buildClusterSpec(testName, engine, "3.8.0", "opensearchproject/opensearch:3.8.0", nil)
 
 	assert.Equal(t, "3.8.0", spec.General.Version)
 	assert.Equal(t, testName, spec.General.ServiceName)
@@ -122,11 +122,19 @@ func TestBuildClusterSpec(t *testing.T) {
 }
 
 func TestBuildClusterSpecDefaults(t *testing.T) {
-	spec := buildClusterSpec(testName, corev1alpha1.ComponentSpec{}, "3.8.0", "")
+	spec := buildClusterSpec(testName, corev1alpha1.ComponentSpec{}, "3.8.0", "", nil)
 
 	assert.Nil(t, spec.General.ImageSpec, "an empty image lets the operator derive it from the version")
 	assert.Equal(t, defaultReplicas, spec.NodePools[0].Replicas)
 	assert.True(t, spec.NodePools[0].DiskSize.IsZero())
+}
+
+func TestBuildNodePoolAdditionalConfig(t *testing.T) {
+	config := map[string]string{"cluster.routing.allocation.disk.threshold_enabled": "false"}
+
+	pool := buildNodePool(testName, validEngine(), config)
+
+	assert.Equal(t, config, pool.AdditionalConfig)
 }
 
 func TestBuildNodePoolSchedulingPolicy(t *testing.T) {
@@ -141,7 +149,7 @@ func TestBuildNodePoolSchedulingPolicy(t *testing.T) {
 		},
 	}
 
-	pool := buildNodePool(testName, engine)
+	pool := buildNodePool(testName, engine, nil)
 
 	assert.Same(t, affinity, pool.Affinity)
 	assert.Equal(t, map[string]string{"disk": "ssd"}, pool.NodeSelector)

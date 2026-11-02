@@ -170,7 +170,7 @@ Most of these are natively handled by the operator; the provider work is mapping
 
 - [x] **Version upgrades** — change `spec.components.engine.version`; operator performs a rolling upgrade. Validate: no downgrade, no jump over more than one major version
 - [x] **Storage expansion** — `engine.storage.size` increase → `diskSize`; validate StorageClass `allowVolumeExpansion`, keep the same unit (`Gi`)
-- [ ] **Custom configuration** — `engine.parameters.configuration` (`opensearch.yml` fragment) → `nodePools[].additionalConfig`; block keys the provider owns (TLS, security, discovery)
+- [x] **Custom configuration** — `engine.parameters.configuration` (`opensearch.yml` fragment) → `nodePools[].additionalConfig`; block keys the provider owns (TLS, security, discovery)
 - [ ] **Service exposure** — `engine.service` (`ClusterIP` / `LoadBalancer`, annotations, source ranges) → `general.annotations` / service type
 - [ ] **Dashboards** — optional `dashboards` component (type `dashboards`, image `opensearchproject/opensearch-dashboards`, version pinned in the same bundle as the engine): replicas, resources, service exposure, generated TLS
 - [ ] Plugins list parameter (`general.pluginsList`) — curated, since plugins are downloaded at pod start

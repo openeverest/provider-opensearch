@@ -47,7 +47,7 @@ func unownedSecretNames(clusterName string) []string {
 
 // buildClusterSpec maps the engine component of an Instance onto an
 // OpenSearchCluster spec for the standard topology.
-func buildClusterSpec(name string, engine corev1alpha1.ComponentSpec, version, image string) opensearchv1.ClusterSpec {
+func buildClusterSpec(name string, engine corev1alpha1.ComponentSpec, version, image string, additionalConfig map[string]string) opensearchv1.ClusterSpec {
 	general := opensearchv1.GeneralConfig{
 		Version:     version,
 		ServiceName: name,
@@ -73,16 +73,17 @@ func buildClusterSpec(name string, engine corev1alpha1.ComponentSpec, version, i
 				Http:      &opensearchv1.TlsConfigHttp{Generate: true},
 			},
 		},
-		NodePools: []opensearchv1.NodePool{buildNodePool(name, engine)},
+		NodePools: []opensearchv1.NodePool{buildNodePool(name, engine, additionalConfig)},
 	}
 }
 
-func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec) opensearchv1.NodePool {
+func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec, additionalConfig map[string]string) opensearchv1.NodePool {
 	pool := opensearchv1.NodePool{
-		Component: nodePoolName,
-		Replicas:  defaultReplicas,
-		Roles:     standardRoles,
-		Resources: nodeResources(engine.Resources),
+		Component:        nodePoolName,
+		AdditionalConfig: additionalConfig,
+		Replicas:         defaultReplicas,
+		Roles:            standardRoles,
+		Resources:        nodeResources(engine.Resources),
 		Persistence: &opensearchv1.PersistenceConfig{
 			PersistenceSource: opensearchv1.PersistenceSource{
 				PVC: &opensearchv1.PVCSource{

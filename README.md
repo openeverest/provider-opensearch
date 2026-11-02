@@ -61,7 +61,7 @@ for what is planned next.
 | Horizontal scaling | ✅ | `spec.components.engine.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources`; the JVM heap is half the memory request |
 | Version upgrades | ✅ | `spec.components.engine.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
-| Custom configuration | ❌ | |
+| Custom configuration | ✅ | `spec.components.engine.parameters.configuration`; an `opensearch.yml` fragment (YAML), merged into `additionalConfig`. TLS, security plugin, and discovery keys are rejected |
 | Monitoring | ❌ | |
 | TLS | ✅ | Operator-generated certificates for transport and HTTP, always on |
 
@@ -191,6 +191,12 @@ Worth knowing:
   class's `allowVolumeExpansion` is not `true`.
 - **Version changes** — downgrades and upgrades that skip a major version are rejected; see
   [Versions](#versions).
+- **Custom configuration** — `spec.components.engine.parameters.configuration` takes an
+  `opensearch.yml` fragment, flattened into dotted keys (nested YAML is flattened the same
+  way, e.g. `cluster: {routing: {allocation: {disk: {threshold_enabled: false}}}}` becomes
+  `cluster.routing.allocation.disk.threshold_enabled`). List-valued keys are rejected, as are
+  keys under `plugins.security.` (TLS and the security plugin) and `discovery.`, which the
+  provider and operator manage.
 
 ## Development
 
