@@ -11,6 +11,16 @@ componentTypes:
       image: opensearchproject/opensearch:3.7.0
     - version: "3.8.0"
       image: opensearchproject/opensearch:3.8.0
+  # Dashboards is versioned separately upstream but released alongside each
+  # OpenSearch version, so the version bundles below always pin it to the
+  # same number as the engine.
+  dashboards:
+    defaultVersion: "3.8.0"
+    versions:
+    - version: "3.7.0"
+      image: opensearchproject/opensearch-dashboards:3.7.0
+    - version: "3.8.0"
+      image: opensearchproject/opensearch-dashboards:3.8.0
 
 # Version bundles — curated sets of component versions known to work together.
 # Users set spec.version on an Instance to select a bundle.
@@ -20,6 +30,8 @@ versions:
 - name: "3.8.0"
   components:
     engine: "3.8.0"
+    dashboards: "3.8.0"
 - name: "3.7.0"
   components:
     engine: "3.7.0"
+    dashboards: "3.7.0"

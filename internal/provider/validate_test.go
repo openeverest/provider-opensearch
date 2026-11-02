@@ -17,6 +17,8 @@ import (
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+
+	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
 func TestValidate(t *testing.T) {
@@ -50,7 +52,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "unknown component",
 			mutate: func(in *corev1alpha1.Instance) {
-				in.Spec.Components["dashboards"] = corev1alpha1.ComponentSpec{}
+				in.Spec.Components["proxy"] = corev1alpha1.ComponentSpec{}
 			},
 			wantErr: "unsupported component",
 		},
@@ -314,6 +316,52 @@ func TestValidateStorageExpansion(t *testing.T) {
 			engine.Storage.StorageClass = tt.storageClass
 			objs := append([]client.Object{existingCluster("3.8.0", tt.storageClass)}, tt.objs...)
 			c, _ := newTestContext(t, testInstance(engine), objs...)
+
+			err := New().Validate(c)
+
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestValidateDashboards(t *testing.T) {
+	tests := []struct {
+		name       string
+		dashboards corev1alpha1.ComponentSpec
+		wantErr    string
+	}{
+		{name: "empty is valid"},
+		{name: "valid replicas", dashboards: corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](2)}},
+		{
+			name:       "zero replicas",
+			dashboards: corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](0)},
+			wantErr:    "replicas",
+		},
+		{
+			name:       "storage is rejected",
+			dashboards: corev1alpha1.ComponentSpec{Storage: &corev1alpha1.Storage{Size: resource.MustParse("1Gi")}},
+			wantErr:    "storage is not supported",
+		},
+		{
+			name:       "invalid version",
+			dashboards: corev1alpha1.ComponentSpec{Version: "not-a-version"},
+			wantErr:    "not a valid semantic version",
+		},
+		{
+			name:       "unsupported service type",
+			dashboards: corev1alpha1.ComponentSpec{Service: &corev1alpha1.Service{ServiceType: corev1.ServiceTypeExternalName}},
+			wantErr:    "unsupported service type",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := testInstance(validEngine())
+			in.Spec.Components[common.ComponentDashboards] = tt.dashboards
+			c, _ := newTestContext(t, in)
 
 			err := New().Validate(c)
 

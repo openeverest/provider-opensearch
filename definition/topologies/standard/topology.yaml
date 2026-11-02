@@ -28,6 +28,16 @@ config:
               nodeSelector: {}
               tolerations: {}
               topologySpreadConstraints: {}
+    dashboards:
+      optional: true
+      defaults:
+        replicas: 1
+      # Dashboards is stateless: no storage field, unlike engine.
+      supportedFields:
+        properties:
+          resources: {}
+          replicas: {minimum: 1}
+          service: {}
 
 ui:
   sections:

@@ -21,6 +21,11 @@ const (
 
 	defaultReplicas int32 = 3
 
+	// defaultDashboardsReplicas matches the operator's own CRD default
+	// (kubebuilder:default=1 on DashboardsConfig.Replicas); set explicitly
+	// here so buildDashboardsConfig's output does not depend on it.
+	defaultDashboardsReplicas int32 = 1
+
 	// Pod labels set by the operator on every OpenSearch node.
 	clusterLabel  = "opensearch.org/opensearch-cluster"
 	nodePoolLabel = "opensearch.org/opensearch-nodepool"
@@ -116,6 +121,39 @@ func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec, additi
 	}
 
 	return pool
+}
+
+// buildDashboardsConfig maps the optional dashboards component onto the
+// OpenSearchCluster's embedded DashboardsConfig. TLS is always generated,
+// consistent with the main cluster's always-on TLS.
+func buildDashboardsConfig(dashboards corev1alpha1.ComponentSpec, version, image string) opensearchv1.DashboardsConfig {
+	cfg := opensearchv1.DashboardsConfig{
+		Enable:   true,
+		Version:  version,
+		Replicas: defaultDashboardsReplicas,
+		Tls: &opensearchv1.DashboardsTlsConfig{
+			Enable:   true,
+			Generate: true,
+		},
+		Resources: nodeResources(dashboards.Resources),
+	}
+	if image != "" {
+		cfg.ImageSpec = &opensearchv1.ImageSpec{Image: &image}
+	}
+	if dashboards.Replicas != nil {
+		cfg.Replicas = *dashboards.Replicas
+	}
+	if svc := dashboards.Service; svc != nil {
+		cfg.Annotations = svc.Annotations
+		cfg.Service.Type = svc.ServiceType
+		if svc.LoadBalancerService != nil {
+			ranges := svc.LoadBalancerService.SourceRanges.NormalizedSourceRanges()
+			if len(ranges) > 0 {
+				cfg.Service.LoadBalancerSourceRanges = []string(ranges)
+			}
+		}
+	}
+	return cfg
 }
 
 // nodeResources returns the node pool resources. The operator sizes the JVM

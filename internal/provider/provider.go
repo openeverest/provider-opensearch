@@ -58,7 +58,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 
 	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	version := resolveVersion(spec, engine)
+	version := resolveVersion(spec, engine, common.ComponentTypeOpensearch)
 	image := engine.Image
 	if image == "" {
 		image = controller.GetImageForVersion(spec, common.ComponentEngine, version)
@@ -72,6 +72,15 @@ func (p *Provider) Sync(c *controller.Context) error {
 	cluster := &opensearchv1.OpenSearchCluster{
 		ObjectMeta: c.ObjectMeta(c.Name()),
 		Spec:       buildClusterSpec(c.Name(), engine, version, image, additionalConfig),
+	}
+
+	if dashboards, ok := c.Instance().Spec.Components[common.ComponentDashboards]; ok {
+		dVersion := resolveVersion(spec, dashboards, common.ComponentTypeDashboards)
+		dImage := dashboards.Image
+		if dImage == "" {
+			dImage = controller.GetImageForVersion(spec, common.ComponentDashboards, dVersion)
+		}
+		cluster.Spec.Dashboards = buildDashboardsConfig(dashboards, dVersion, dImage)
 	}
 
 	// Apply replaces metadata wholesale; keep the operator's finalizer so it
@@ -90,13 +99,13 @@ func (p *Provider) Sync(c *controller.Context) error {
 	return syncExposedService(c, engine)
 }
 
-// resolveVersion returns the requested engine version, or the provider default
-// when the Instance does not set one.
-func resolveVersion(spec *corev1alpha1.ProviderSpec, engine corev1alpha1.ComponentSpec) string {
-	if engine.Version != "" {
-		return engine.Version
+// resolveVersion returns the requested component version, or the provider
+// default for componentType when the Instance does not set one.
+func resolveVersion(spec *corev1alpha1.ProviderSpec, component corev1alpha1.ComponentSpec, componentType string) string {
+	if component.Version != "" {
+		return component.Version
 	}
-	if v := controller.GetDefaultVersion(spec, common.ComponentTypeOpensearch); v != nil {
+	if v := controller.GetDefaultVersion(spec, componentType); v != nil {
 		return v.Version
 	}
 	return ""

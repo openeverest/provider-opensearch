@@ -172,7 +172,7 @@ Most of these are natively handled by the operator; the provider work is mapping
 - [x] **Storage expansion** — `engine.storage.size` increase → `diskSize`; validate StorageClass `allowVolumeExpansion`, keep the same unit (`Gi`)
 - [x] **Custom configuration** — `engine.parameters.configuration` (`opensearch.yml` fragment) → `nodePools[].additionalConfig`; block keys the provider owns (TLS, security, discovery)
 - [x] **Service exposure** — `engine.service`: annotations map onto `general.annotations` on the operator's own service (always `ClusterIP`, no field to change that). `serviceType: LoadBalancer`/`NodePort` and `loadBalancerService.sourceRanges` are served by a separate `<name>-exposed` Service the provider manages directly, selecting the same pods — the operator has no field for this (its own `NewNodePortService` builder exists but is never wired into its reconciler)
-- [ ] **Dashboards** — optional `dashboards` component (type `dashboards`, image `opensearchproject/opensearch-dashboards`, version pinned in the same bundle as the engine): replicas, resources, service exposure, generated TLS
+- [x] **Dashboards** — optional `dashboards` component (type `dashboards`, image `opensearchproject/opensearch-dashboards`, version pinned in the same bundle as the engine): replicas, resources, service exposure, generated TLS. No UI form field yet, API-only — matches `backupAgent` in provider-percona-server-mongodb, the only other optional-component precedent, which also has none
 - [ ] Plugins list parameter (`general.pluginsList`) — curated, since plugins are downloaded at pod start
 - [ ] Chainsaw suites: upgrade, storage expansion, dashboards
 
@@ -182,6 +182,7 @@ Most of these are natively handled by the operator; the provider work is mapping
 | Storage expansion | ✅ |
 | Custom configuration | ✅ |
 | Service exposure | ✅ |
+| Dashboards | ✅ |
 
 ---
 
@@ -289,8 +290,9 @@ Not scheduled; picked up based on demand.
    handled (close + overwrite, rename pattern, or require an empty cluster).
 4. **Health `yellow`** — confirm that `yellow` is acceptable for `Ready` (single-node clusters are
    always yellow when indices have replicas).
-5. **Dashboards as a component vs. a toggle** — a component fits the model and UI, but it is not a
-   database node; confirm with OpenEverest core conventions.
+5. ~~**Dashboards as a component vs. a toggle**~~ — resolved: implemented as an optional
+   `dashboards` component, matching provider-percona-server-mongodb's `backupAgent`, the only
+   other optional-component precedent in the OpenEverest ecosystem at the time.
 6. **Minimum resources** — the JVM needs meaningful memory; finalize minimums and heap ratio after
    load testing.
 

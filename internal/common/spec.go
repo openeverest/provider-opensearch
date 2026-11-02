@@ -11,7 +11,11 @@ const (
 	// ComponentEngine is the OpenSearch node component.
 	ComponentEngine = "engine"
 
+	// ComponentDashboards is the optional OpenSearch Dashboards component.
+	ComponentDashboards = "dashboards"
+
 	ComponentTypeOpensearch = "opensearch"
+	ComponentTypeDashboards = "dashboards"
 
 	// TopologyStandard is the default topology: a single node pool of
 	// cluster-manager eligible data nodes.

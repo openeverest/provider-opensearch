@@ -45,8 +45,9 @@ func validate(c *controller.Context) error {
 	}
 
 	for name := range in.Spec.Components {
-		if name != common.ComponentEngine {
-			return fmt.Errorf("unsupported component %q: only %q is supported", name, common.ComponentEngine)
+		if name != common.ComponentEngine && name != common.ComponentDashboards {
+			return fmt.Errorf("unsupported component %q: only %q and %q are supported",
+				name, common.ComponentEngine, common.ComponentDashboards)
 		}
 	}
 	engine, ok := in.Spec.Components[common.ComponentEngine]
@@ -79,7 +80,7 @@ func validate(c *controller.Context) error {
 	if err != nil {
 		return err
 	}
-	version := resolveVersion(spec, engine)
+	version := resolveVersion(spec, engine, common.ComponentTypeOpensearch)
 	if version != "" {
 		if _, err := utilversion.ParseSemantic(version); err != nil {
 			return fmt.Errorf("%s: version %q is not a valid semantic version, e.g. 3.8.0", common.ComponentEngine, version)
@@ -94,7 +95,31 @@ func validate(c *controller.Context) error {
 		return err
 	}
 
+	if dashboards, ok := in.Spec.Components[common.ComponentDashboards]; ok {
+		if err := validateDashboards(spec, dashboards); err != nil {
+			return err
+		}
+	}
+
 	return validateAgainstExisting(c, engine.Storage, version)
+}
+
+func validateDashboards(spec *corev1alpha1.ProviderSpec, dashboards corev1alpha1.ComponentSpec) error {
+	if dashboards.Replicas != nil && *dashboards.Replicas < 1 {
+		return fmt.Errorf("%s: replicas must be at least 1", common.ComponentDashboards)
+	}
+	if dashboards.Storage != nil {
+		return fmt.Errorf("%s: storage is not supported", common.ComponentDashboards)
+	}
+
+	version := resolveVersion(spec, dashboards, common.ComponentTypeDashboards)
+	if version != "" {
+		if _, err := utilversion.ParseSemantic(version); err != nil {
+			return fmt.Errorf("%s: version %q is not a valid semantic version, e.g. 3.8.0", common.ComponentDashboards, version)
+		}
+	}
+
+	return validateServiceType(dashboards.Service)
 }
 
 func validateName(name string) error {

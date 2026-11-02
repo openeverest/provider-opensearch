@@ -63,6 +63,7 @@ for what is planned next.
 | Version upgrades | ✅ | `spec.components.engine.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration`; an `opensearch.yml` fragment (YAML), merged into `additionalConfig`. TLS, security plugin, and discovery keys are rejected |
 | External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service |
+| Dashboards | ✅ | Optional `dashboards` component; see [Configuration](#configuration) |
 | Monitoring | ❌ | |
 | TLS | ✅ | Operator-generated certificates for transport and HTTP, always on |
 
@@ -204,6 +205,13 @@ Worth knowing:
   pointing at the same pods, exposing only the REST API port (9200). Annotations
   (`service.annotations`) are applied to the operator's main service regardless of type.
   Reverting to `ClusterIP` (or unsetting `service`) removes the `<name>-exposed` service.
+- **Dashboards** — an optional `dashboards` component deploys OpenSearch Dashboards as part of
+  the same `OpenSearchCluster`. Supported fields: `replicas`, `resources`, and `service`
+  (`serviceType`, `annotations`, `loadBalancerService.sourceRanges` — the operator supports a
+  real service type for Dashboards, unlike the main engine). TLS is always generated. There is
+  no UI form field for it yet (API/CLI only), matching the only other optional-component
+  precedent in the OpenEverest ecosystem. Credentials live in the
+  `<name>-dashboards-password` secret.
 
 ## Development
 

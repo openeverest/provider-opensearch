@@ -51,9 +51,17 @@ func testProvider() *corev1alpha1.Provider {
 						{Version: "3.8.0", Image: "opensearchproject/opensearch:3.8.0"},
 					},
 				},
+				common.ComponentTypeDashboards: {
+					DefaultVersion: "3.8.0",
+					Versions: []corev1alpha1.ComponentVersion{
+						{Version: "3.7.0", Image: "opensearchproject/opensearch-dashboards:3.7.0"},
+						{Version: "3.8.0", Image: "opensearchproject/opensearch-dashboards:3.8.0"},
+					},
+				},
 			},
 			Components: map[string]corev1alpha1.Component{
-				common.ComponentEngine: {Type: common.ComponentTypeOpensearch},
+				common.ComponentEngine:     {Type: common.ComponentTypeOpensearch},
+				common.ComponentDashboards: {Type: common.ComponentTypeDashboards},
 			},
 		},
 	}
@@ -255,6 +263,72 @@ func TestSync(t *testing.T) {
 		got := &opensearchv1.OpenSearchCluster{}
 		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
 		assert.Equal(t, []string{"Opensearch"}, got.Finalizers)
+	})
+
+	t.Run("dashboards not requested: disabled", func(t *testing.T) {
+		c, cl := newTestContext(t, testInstance(validEngine()))
+
+		require.NoError(t, New().Sync(c))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.False(t, got.Spec.Dashboards.Enable)
+	})
+
+	t.Run("dashboards requested: enabled and wired", func(t *testing.T) {
+		in := testInstance(validEngine())
+		in.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{Version: "3.7.0"}
+		c, cl := newTestContext(t, in)
+
+		require.NoError(t, New().Sync(c))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.True(t, got.Spec.Dashboards.Enable)
+		assert.Equal(t, "3.7.0", got.Spec.Dashboards.Version)
+		assert.Equal(t, "opensearchproject/opensearch-dashboards:3.7.0", *got.Spec.Dashboards.Image)
+		require.NotNil(t, got.Spec.Dashboards.Tls)
+		assert.True(t, got.Spec.Dashboards.Tls.Enable)
+		assert.True(t, got.Spec.Dashboards.Tls.Generate)
+	})
+}
+
+func TestBuildDashboardsConfig(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg := buildDashboardsConfig(corev1alpha1.ComponentSpec{}, "3.8.0", "opensearchproject/opensearch-dashboards:3.8.0")
+
+		assert.True(t, cfg.Enable)
+		assert.Equal(t, defaultDashboardsReplicas, cfg.Replicas)
+		assert.Equal(t, "3.8.0", cfg.Version)
+		require.NotNil(t, cfg.Tls)
+		assert.True(t, cfg.Tls.Enable)
+		assert.True(t, cfg.Tls.Generate)
+	})
+
+	t.Run("replicas override", func(t *testing.T) {
+		dashboards := corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](2)}
+
+		cfg := buildDashboardsConfig(dashboards, "3.8.0", "")
+
+		assert.Equal(t, int32(2), cfg.Replicas)
+	})
+
+	t.Run("service exposure", func(t *testing.T) {
+		dashboards := corev1alpha1.ComponentSpec{
+			Service: &corev1alpha1.Service{
+				ServiceType: corev1.ServiceTypeLoadBalancer,
+				Annotations: map[string]string{"example.com/lb": "internal"},
+				LoadBalancerService: &corev1alpha1.LoadBalancerService{
+					SourceRanges: corev1alpha1.SourceRanges{"10.0.0.0/8"},
+				},
+			},
+		}
+
+		cfg := buildDashboardsConfig(dashboards, "3.8.0", "")
+
+		assert.Equal(t, map[string]string{"example.com/lb": "internal"}, cfg.Annotations)
+		assert.Equal(t, corev1.ServiceTypeLoadBalancer, cfg.Service.Type)
+		assert.Equal(t, []string{"10.0.0.0/8"}, cfg.Service.LoadBalancerSourceRanges)
 	})
 }
 

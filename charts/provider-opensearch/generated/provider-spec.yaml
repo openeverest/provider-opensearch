@@ -2,6 +2,13 @@
 # Do not edit manually. Run `make generate` to update.
 spec:
   componentTypes:
+    dashboards:
+      defaultVersion: 3.8.0
+      versions:
+        - image: opensearchproject/opensearch-dashboards:3.7.0
+          version: 3.7.0
+        - image: opensearchproject/opensearch-dashboards:3.8.0
+          version: 3.8.0
     opensearch:
       defaultVersion: 3.8.0
       versions:
@@ -10,6 +17,8 @@ spec:
         - image: opensearchproject/opensearch:3.8.0
           version: 3.8.0
   components:
+    dashboards:
+      type: dashboards
     engine:
       parametersSchema:
         openAPIV3Schema:
@@ -24,6 +33,15 @@ spec:
   topologies:
     standard:
       components:
+        dashboards:
+          optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas:
+                  minimum: 1
+                resources: {}
+                service: {}
         engine:
           supportedFields:
             openAPIV3Schema:
@@ -184,8 +202,10 @@ spec:
         - advanced
   versions:
     - components:
+        dashboards: 3.8.0
         engine: 3.8.0
       name: 3.8.0
     - components:
+        dashboards: 3.7.0
         engine: 3.7.0
       name: 3.7.0
