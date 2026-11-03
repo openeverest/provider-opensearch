@@ -136,7 +136,7 @@ func TestBuildClusterSpecServiceAnnotations(t *testing.T) {
 	engine := validEngine()
 	engine.Service = &corev1alpha1.Service{Annotations: map[string]string{"example.com/scrape": "true"}}
 
-	spec := buildClusterSpec(testName, engine, "3.8.0", "", nil)
+	spec := buildClusterSpec(testName, engine, "3.8.0", "", nil, nil, nil, nil)
 
 	assert.Equal(t, map[string]string{"example.com/scrape": "true"}, spec.General.Annotations)
 }

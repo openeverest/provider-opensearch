@@ -69,9 +69,14 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	snapshotRepos, keystore, backupPlugins, err := buildBackupConfig(c)
+	if err != nil {
+		return err
+	}
+
 	cluster := &opensearchv1.OpenSearchCluster{
 		ObjectMeta: c.ObjectMeta(c.Name()),
-		Spec:       buildClusterSpec(c.Name(), engine, version, image, additionalConfig),
+		Spec:       buildClusterSpec(c.Name(), engine, version, image, additionalConfig, snapshotRepos, keystore, backupPlugins),
 	}
 
 	if dashboards, ok := c.Instance().Spec.Components[common.ComponentDashboards]; ok {
@@ -96,7 +101,27 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	return syncExposedService(c, engine)
+	if err := syncExposedService(c, engine); err != nil {
+		return err
+	}
+
+	if err := syncScheduledBackups(c); err != nil {
+		return err
+	}
+	if err := mirrorScheduledBackups(c); err != nil {
+		return err
+	}
+
+	// Instance.spec.dataSource seeds a new Instance from an existing Backup.
+	// ReconcileDataSource creates (or reads back) a Restore CR for it, which
+	// SyncRestore then drives the same way as any user-created Restore.
+	if c.Instance().Spec.DataSource != nil {
+		if _, err := c.ReconcileDataSource(); err != nil {
+			return fmt.Errorf("reconcile data source: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // resolveVersion returns the requested component version, or the provider
@@ -113,6 +138,18 @@ func resolveVersion(spec *corev1alpha1.ProviderSpec, component corev1alpha1.Comp
 
 // Status translates the OpenSearchCluster status into the Instance status.
 func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
+	// While the initial seeding from .spec.dataSource has not reached a
+	// terminal state, surface that instead of the cluster's own health:
+	// the cluster itself can be green while restore is still in progress.
+	if ds := c.GetDataSourceStatus(); ds != nil {
+		if !ds.Done {
+			return controller.Restoring(ds.Message), nil
+		}
+		if ds.State == controller.DataSourceStateFailed {
+			return controller.Failed(ds.Message), nil
+		}
+	}
+
 	cluster := &opensearchv1.OpenSearchCluster{}
 	if err := c.Get(cluster, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {

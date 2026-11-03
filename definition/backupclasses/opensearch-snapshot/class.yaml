@@ -1,0 +1,38 @@
+# OpensearchSnapshot BackupClass definition.
+# This file is the source of truth for the generated BackupClass manifest.
+#
+# Fields:
+#   displayName/description: human-readable metadata.
+#   supportedProviders: providers this class can be used with.
+#   executionMode: "ProviderManaged" (operator-native) or "Job".
+#   providerManaged.supportsPITR: advertise PITR capability to Restore validation.
+#   providerManaged.limits: caps the runtime enforces against Instance.spec.backup.
+#     maxStorages, maxPITREnabledStorages, maxSchedulesPerStorage — unset means unlimited.
+#   providerManaged.pitrParametersSchema.openAPIV3Schema: Go type name (in this
+#     package) describing per-storage PITR parameters. Resolved to an OpenAPI
+#     schema at generation time.
+#   parametersSchema.openAPIV3Schema / restoreParametersSchema.openAPIV3Schema:
+#     Go type names describing backup-time and restore-time parameters respectively.
+#
+# Co-located files:
+#   ui.yaml  — free-form UI rendering hints, inlined verbatim under spec.uiSchema.
+#   types.go — Go types referenced above; OpenAPI-extracted by provider-sdk generate.
+
+description: >-
+  On-demand OpenSearch snapshots to an S3-compatible repository, driven by the
+  provider directly through the cluster's snapshot REST API. The operator has
+  no snapshot or restore CR of its own. Point-in-time recovery is not
+  supported.
+displayName: OpenSearch Snapshot
+executionMode: ProviderManaged
+parametersSchema:
+    openAPIV3Schema: OpensearchSnapshotBackupParameters
+providerManaged:
+    limits: {}
+    pitrParametersSchema:
+        openAPIV3Schema: OpensearchSnapshotPITRParameters
+    supportsPITR: false
+restoreParametersSchema:
+    openAPIV3Schema: OpensearchSnapshotRestoreParameters
+supportedProviders:
+    - opensearch

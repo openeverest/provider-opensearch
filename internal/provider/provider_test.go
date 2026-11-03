@@ -17,6 +17,7 @@ import (
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
+	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -36,6 +37,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	require.NoError(t, storagev1.AddToScheme(scheme))
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
 	require.NoError(t, opensearchv1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
 	return scheme
 }
 
@@ -105,7 +107,7 @@ func TestBuildClusterSpec(t *testing.T) {
 	engine := validEngine()
 	engine.Storage.StorageClass = ptr.To("fast")
 
-	spec := buildClusterSpec(testName, engine, "3.8.0", "opensearchproject/opensearch:3.8.0", nil)
+	spec := buildClusterSpec(testName, engine, "3.8.0", "opensearchproject/opensearch:3.8.0", nil, nil, nil, nil)
 
 	assert.Equal(t, "3.8.0", spec.General.Version)
 	assert.Equal(t, testName, spec.General.ServiceName)
@@ -130,7 +132,7 @@ func TestBuildClusterSpec(t *testing.T) {
 }
 
 func TestBuildClusterSpecDefaults(t *testing.T) {
-	spec := buildClusterSpec(testName, corev1alpha1.ComponentSpec{}, "3.8.0", "", nil)
+	spec := buildClusterSpec(testName, corev1alpha1.ComponentSpec{}, "3.8.0", "", nil, nil, nil, nil)
 
 	assert.Nil(t, spec.General.ImageSpec, "an empty image lets the operator derive it from the version")
 	assert.Equal(t, defaultReplicas, spec.NodePools[0].Replicas)
@@ -290,6 +292,23 @@ func TestSync(t *testing.T) {
 		require.NotNil(t, got.Spec.Dashboards.Tls)
 		assert.True(t, got.Spec.Dashboards.Tls.Enable)
 		assert.True(t, got.Spec.Dashboards.Tls.Generate)
+	})
+
+	t.Run("data source: reconciles without erroring when the source is not ready yet", func(t *testing.T) {
+		in := testInstance(validEngine())
+		in.Spec.DataSource = &backupv1alpha1.DataSource{
+			Type:   backupv1alpha1.DataSourceTypeBackup,
+			Backup: &backupv1alpha1.DataSourceBackup{BackupRef: commonv1alpha1.ObjectRef{Name: "ghost"}},
+		}
+		c, _ := newTestContext(t, in)
+
+		// The source Backup does not exist; ReconcileDataSource stages a
+		// "waiting" status rather than failing the whole Sync.
+		require.NoError(t, New().Sync(c))
+
+		ds := c.GetDataSourceStatus()
+		require.NotNil(t, ds)
+		assert.False(t, ds.Done)
 	})
 }
 

@@ -52,11 +52,22 @@ func unownedSecretNames(clusterName string) []string {
 
 // buildClusterSpec maps the engine component of an Instance onto an
 // OpenSearchCluster spec for the standard topology.
-func buildClusterSpec(name string, engine corev1alpha1.ComponentSpec, version, image string, additionalConfig map[string]string) opensearchv1.ClusterSpec {
+func buildClusterSpec(
+	name string,
+	engine corev1alpha1.ComponentSpec,
+	version, image string,
+	additionalConfig map[string]string,
+	snapshotRepos []opensearchv1.SnapshotRepoConfig,
+	keystore []opensearchv1.KeystoreValue,
+	backupPlugins []string,
+) opensearchv1.ClusterSpec {
 	general := opensearchv1.GeneralConfig{
-		Version:     version,
-		ServiceName: name,
-		HttpPort:    httpPort,
+		Version:              version,
+		ServiceName:          name,
+		HttpPort:             httpPort,
+		SnapshotRepositories: snapshotRepos,
+		Keystore:             keystore,
+		PluginsList:          backupPlugins,
 		// The PVCs hold the only copy of the data; drop them with the cluster
 		// but keep them on scale-down so scaling back up reuses them.
 		PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{

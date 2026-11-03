@@ -73,9 +73,9 @@ Stateful workloads additionally report:
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage`; volumes are deleted with the Instance |
 | Storage expansion | ✅ | `spec.components.engine.storage.size`; rejected when the StorageClass does not allow expansion |
-| Backups (on demand) | ❌ | |
-| Backups (scheduled) | ❌ | |
-| Restore | ❌ | |
+| Backups (on demand) | ✅ | S3-compatible storage, via the OpenSearch snapshot API; see [Configuration](#configuration) |
+| Backups (scheduled) | ✅ | `spec.backup.storages[].schedules[]`; see [Configuration](#configuration) |
+| Restore | ✅ | In place, or seeding a new Instance via `spec.dataSource`; see [Configuration](#configuration) |
 
 ## Installation
 
@@ -212,6 +212,21 @@ Worth knowing:
   no UI form field for it yet (API/CLI only), matching the only other optional-component
   precedent in the OpenEverest ecosystem. Credentials live in the
   `<name>-dashboards-password` secret.
+- **Backups (on demand)** — register an S3-compatible `BackupStorage` on the Instance via
+  `spec.backup.storages[]`; the provider maps it onto `general.snapshotRepositories` and
+  `general.keystore` and adds `repository-s3` to `pluginsList`. A `Backup` CR targeting the
+  `opensearch-snapshot` BackupClass then drives a real OpenSearch snapshot through the
+  cluster's own REST API — the operator has no backup CR of its own. Deleting the `Backup` CR
+  deletes the snapshot unless `deletionPolicy: Retain` is set.
+- **Backups (scheduled)** — add entries under `spec.backup.storages[].schedules[]`; each
+  enabled schedule becomes an `OpensearchSnapshotPolicy` (operator-native Snapshot Management).
+  `retentionCopies` becomes a deletion condition on the same cron as creation. The provider
+  polls the repository each reconcile and creates a `Backup` CR for every snapshot the policy
+  produces, so scheduled backups show up alongside on-demand ones.
+- **Restore** — a `Restore` CR targeting a `Backup` closes the snapshot's indices and restores
+  over them in place (same names; no rename pattern, no empty-cluster requirement). The same
+  path seeds a brand-new Instance: set `spec.dataSource` on the Instance to a `Backup` and the
+  runtime creates the restore automatically. Point-in-time recovery is not supported.
 
 ## Development
 

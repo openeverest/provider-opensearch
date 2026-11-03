@@ -101,7 +101,32 @@ func validate(c *controller.Context) error {
 		}
 	}
 
+	if _, _, _, err := buildBackupConfig(c); err != nil {
+		return err
+	}
+
+	if err := validateBackupSchedules(in.Spec.Backup); err != nil {
+		return err
+	}
+
 	return validateAgainstExisting(c, engine.Storage, version)
+}
+
+// validateBackupSchedules rejects a schedule name that cannot form a valid
+// OpensearchSnapshotPolicy object name (snapshotPolicyName combines it with
+// the Instance name).
+func validateBackupSchedules(backupCfg *corev1alpha1.InstanceBackupSpec) error {
+	if backupCfg == nil {
+		return nil
+	}
+	for _, storage := range backupCfg.Storages {
+		for _, sched := range storage.Schedules {
+			if errs := validation.IsDNS1123Label(sched.Name); len(errs) > 0 {
+				return fmt.Errorf("%s: schedule %q is invalid: %s", common.ComponentEngine, sched.Name, strings.Join(errs, "; "))
+			}
+		}
+	}
+	return nil
 }
 
 func validateDashboards(spec *corev1alpha1.ProviderSpec, dashboards corev1alpha1.ComponentSpec) error {

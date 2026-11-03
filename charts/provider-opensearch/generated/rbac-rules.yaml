@@ -21,6 +21,37 @@
     - update
     - watch
 - apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backupclasses
+    - backupstorages
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backups
+    - restores
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backups/status
+    - restores/status
+  verbs:
+    - get
+    - patch
+    - update
+- apiGroups:
     - coordination.k8s.io
   resources:
     - leases
@@ -68,6 +99,7 @@
     - opensearch.org
   resources:
     - opensearchclusters
+    - opensearchsnapshotpolicies
   verbs:
     - create
     - delete

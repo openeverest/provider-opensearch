@@ -142,4 +142,47 @@ func TestStatus(t *testing.T) {
 
 		assert.Error(t, err)
 	})
+
+	t.Run("data source restoring overrides a ready cluster", func(t *testing.T) {
+		cluster := testCluster(3, opensearchv1.ClusterStatus{
+			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+		})
+		c, _ := newTestContext(t, testInstance(validEngine()), cluster)
+		c.SetDataSourceStatus(controller.DataSourceStatus{Done: false, Message: "restoring from backup"})
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseRestoring, got.Phase)
+	})
+
+	t.Run("data source failed overrides a ready cluster", func(t *testing.T) {
+		cluster := testCluster(3, opensearchv1.ClusterStatus{
+			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+		})
+		c, _ := newTestContext(t, testInstance(validEngine()), cluster)
+		c.SetDataSourceStatus(controller.DataSourceStatus{Done: true, State: controller.DataSourceStateFailed, Message: "source backup not found"})
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseFailed, got.Phase)
+	})
+
+	t.Run("data source succeeded does not override", func(t *testing.T) {
+		cluster := testCluster(3, opensearchv1.ClusterStatus{
+			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+		})
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: adminSecretName(testName), Namespace: testNamespace},
+			Data:       map[string][]byte{"username": []byte("admin"), "password": []byte("secret")},
+		}
+		c, _ := newTestContext(t, testInstance(validEngine()), cluster, secret)
+		c.SetDataSourceStatus(controller.DataSourceStatus{Done: true, State: controller.DataSourceStateSucceeded})
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseReady, got.Phase)
+	})
 }

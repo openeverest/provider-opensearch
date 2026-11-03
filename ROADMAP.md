@@ -194,24 +194,25 @@ scheduled **Snapshot Management** policies (`OpensearchSnapshotPolicy`); it has 
 snapshot or restore CR**. `Instance.spec.dataSource` requires a `ProviderManaged` BackupClass, so
 the provider drives snapshots itself through the OpenSearch REST API.
 
-- [ ] BackupClass `opensearch-snapshot` (`executionMode: ProviderManaged`, `supportsPITR: false`)
-- [ ] `spec.backup.storages[]` → `general.snapshotRepositories[]` (S3 / S3-compatible, e.g. MinIO); add `repository-s3` to `pluginsList`
-- [ ] S3 credentials from `BackupStorage` secret → `general.keystore` (`s3.client.<name>.access_key` / `secret_key`); handle the rolling restart caused by keystore changes (or `_nodes/reload_secure_settings`)
-- [ ] Authenticated REST client in the provider (admin credentials + operator-generated CA) — shared helper, used by backup, restore and status
-- [ ] **On-demand backup** — `SyncBackup`: `PUT _snapshot/<repo>/<backup-name>`, poll `GET _snapshot/<repo>/<name>` → `BackupExecutionStatus` (state, start/end, size)
-- [ ] **Backup deletion** — `CleanupBackup`: `DELETE _snapshot/<repo>/<name>` when `deletionPolicy: Delete`
-- [ ] **Scheduled backups** — `storages[].schedules[]` → `OpensearchSnapshotPolicy` (cron, `deleteCondition.maxCount = retentionCopies`)
-- [ ] **Mirror scheduled snapshots** into `Backup` CRs — snapshots are not Kubernetes objects, so `BackupMirror` (which watches an operator CR) does not fit as-is; see [open questions](#open-questions)
-- [ ] **Restore in place** — `SyncRestore`: close/delete target indices, `POST _snapshot/<repo>/<name>/_restore`, track recovery → `RestoreExecutionStatus`; Instance reports `Restoring`
-- [ ] **New Instance from backup** — `spec.dataSource`: provision, then restore once the cluster is `Ready`
-- [ ] Dev: MinIO + `BackupStorage` manifests in `dev/resources/`; Chainsaw `backup` suite
+- [x] BackupClass `opensearch-snapshot` (`executionMode: ProviderManaged`, `supportsPITR: false`)
+- [x] `spec.backup.storages[]` → `general.snapshotRepositories[]` (S3 / S3-compatible, e.g. MinIO); add `repository-s3` to `pluginsList`
+- [x] S3 credentials from `BackupStorage` secret → `general.keystore` (`s3.client.<name>.access_key` / `secret_key`). Not verified: whether the operator restarts nodes to pick up a *changed* credentials secret on an already-running cluster (`_nodes/reload_secure_settings` vs. a rolling restart) — only the initial registration was tested live
+- [x] Authenticated REST client in the provider (admin credentials + operator-generated CA) — shared helper (`opensearch_client.go`), used by backup today, ready for restore and status
+- [x] **On-demand backup** — `SyncBackup`: `PUT _snapshot/<repo>/<backup-name>`, poll `GET _snapshot/<repo>/<name>` → `BackupExecutionStatus` (state, start/end, size)
+- [x] **Backup deletion** — `CleanupBackup`: `DELETE _snapshot/<repo>/<name>` when `deletionPolicy: Delete`
+- [x] **Scheduled backups** — `storages[].schedules[]` → one `OpensearchSnapshotPolicy` CR per enabled schedule (cron, `deleteCondition.maxCount = retentionCopies`, deletion runs on the same cron as creation since a deletion condition with no schedule of its own never fires); stale policies for removed/disabled schedules are deleted
+- [x] **Mirror scheduled snapshots** into `Backup` CRs — resolved: `BackupMirror` does not fit (it watches a single operator-native CR; snapshots are not Kubernetes objects). Instead, `Sync` polls `GET _snapshot/<repo>/_all` each reconcile and creates a `Backup` CR (named after the snapshot, so creating it twice is a no-op) for any `SUCCESS` snapshot whose name matches `<instance>-<schedule>-`. Not owned by the Instance via a Kubernetes ownerReference — `Backup.spec.origin.instanceRef` plus `InstanceDeletionPolicy` already govern that relationship
+- [x] **Restore in place** — `SyncRestore`: close target indices (`_close`), `POST _snapshot/<repo>/<name>/_restore`, track recovery via the shard recovery API (`GET /<indices>/_recovery`, all shards `type: SNAPSHOT`/`stage: DONE`) → `RestoreExecutionStatus`; Instance reports `Restoring`. Verified live end to end: wrote a doc, snapshotted, modified the doc, restored, confirmed the original value came back. Caught a real bug this way — restoring with `include_global_state: true` is rejected by the security plugin for *any* basic-auth user regardless of role (`security_exception` on `cluster:admin/snapshot/restore`, even for `all_access`); fixed by always restoring with `include_global_state: false`, which is also the safer default for an in-place restore (it would otherwise overwrite the cluster's current security config/users with their snapshot-time values)
+- [x] **New Instance from backup** — `spec.dataSource`: `Sync` calls `ReconcileDataSource()`, which creates the seeding `Restore` CR and drives it through the same `SyncRestore`
+- [x] Dev: S3-compatible mock (`adobe/s3mock`; `quay.io/minio/minio:latest` now 401s on anonymous pulls) + `BackupStorage` manifests in `dev/resources/`
+- [ ] Chainsaw `backup` suite
 
 | Capability | Status | Notes |
 |---|---|---|
 | Backups (on demand) | ✅ | Snapshot API |
-| Backups (scheduled) | ✅ | Snapshot Management policies |
+| Backups (scheduled) | ✅ | `OpensearchSnapshotPolicy` + REST-polled mirroring into `Backup` CRs |
 | Restore | ✅ | In place and via `spec.dataSource` |
-| Point-in-time recovery | — | Not supported by OpenSearch; row removed from README |
+| Point-in-time recovery | — | Not supported by OpenSearch |
 
 ---
 
@@ -279,15 +280,16 @@ Not scheduled; picked up based on demand.
 
 ## Open questions
 
-1. **Mirroring scheduled snapshots** — `BackupMirror` watches an operator CR, but SM snapshots only
-   exist in the OpenSearch API. Options: poll snapshots during `Sync` and create `Backup` CRs
-   directly; run schedules from the provider instead of SM; or extend provider-runtime with a
-   polling mirror.
+1. ~~**Mirroring scheduled snapshots**~~ — resolved: poll snapshots during `Sync` and create
+   `Backup` CRs directly (first option below), rather than running schedules from the provider
+   itself or extending provider-runtime with a polling mirror. See `mirrorScheduledBackups` in
+   `scheduled_backup.go`.
 2. **Provider → cluster connectivity** — backup/restore needs the provider pod to reach every
    Instance over HTTPS (NetworkPolicies, CA trust). Confirm this is acceptable versus a Job-based
    approach.
-3. **Restore semantics** — which indices are restored and how conflicts with existing indices are
-   handled (close + overwrite, rename pattern, or require an empty cluster).
+3. ~~**Restore semantics**~~ — resolved: close + overwrite. All indices captured by the
+   snapshot (`indices: "*"`, matching how backup was taken) are closed, then restored over,
+   same names. No rename pattern, no empty-cluster requirement.
 4. **Health `yellow`** — confirm that `yellow` is acceptable for `Ready` (single-node clusters are
    always yellow when indices have replicas).
 5. ~~**Dashboards as a component vs. a toggle**~~ — resolved: implemented as an optional
