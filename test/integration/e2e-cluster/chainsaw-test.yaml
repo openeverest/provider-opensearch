@@ -1,0 +1,86 @@
+---
+# End-to-end suite against the real OpenSearch operator (see
+# deploy-provider-e2e): create an Instance, wait for the operator to
+# actually start OpenSearch and report it healthy — no status faking, unlike
+# the core suite — then verify the connection details the provider publishes
+# really work against the live cluster.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: e2e-cluster
+spec:
+  description: |
+    Instance reaches Ready against a real OpenSearchCluster, and the
+    published connection details actually work.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get pods
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 200
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=operator
+        tail: 200
+
+  steps:
+    - name: provider-and-operator-deployed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+
+    - name: instance-ready
+      try:
+        # The real operator pulling the OpenSearch image and starting a node
+        # takes much longer than the suite's default 30s assert timeout.
+        - assert:
+            file: 20-assert.yaml
+            timeout: 8m
+
+    - name: connection-works
+      try:
+        - script:
+            timeout: 1m
+            content: |
+              set -e
+              HOST=$(kubectl -n $NAMESPACE get secret test-instance-conn -o jsonpath='{.data.host}' | base64 -d)
+              PORT=$(kubectl -n $NAMESPACE get secret test-instance-conn -o jsonpath='{.data.port}' | base64 -d)
+              USERNAME=$(kubectl -n $NAMESPACE get secret test-instance-conn -o jsonpath='{.data.username}' | base64 -d)
+              PASSWORD=$(kubectl -n $NAMESPACE get secret test-instance-conn -o jsonpath='{.data.password}' | base64 -d)
+              kubectl -n $NAMESPACE run e2e-cluster-conn-check --rm -i --restart=Never \
+                --image=curlimages/curl:8.11.0 --command -- \
+                curl -sk --fail -u "$USERNAME:$PASSWORD" "https://$HOST:$PORT/_cluster/health" > /tmp/health.json
+              cat /tmp/health.json
+              grep -q '"status"' /tmp/health.json
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-instance
+        - wait:
+            apiVersion: opensearch.org/v1
+            kind: OpenSearchCluster
+            name: test-instance
+            timeout: 2m
+            for:
+              deletion: {}
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: test-instance-admin-password

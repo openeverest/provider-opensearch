@@ -103,3 +103,16 @@ jobs:
       make_target: test-integration-core
       suite: core
     secrets: inherit
+
+  # Unlike core, this suite deploys the real OpenSearch operator
+  # (deploy-provider-e2e) instead of simulating it, so the Instance must
+  # reach Ready against a genuinely running OpenSearch cluster.
+  test-integration-e2e-cluster:
+    name: Integration / e2e-cluster
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-e2e-cluster
+      deploy_target: deploy-provider-e2e
+      suite: e2e-cluster
+    secrets: inherit

@@ -5,10 +5,21 @@ using [chainsaw](https://kyverno.github.io/chainsaw/). They apply OpenEverest
 `Instance` CRs, assert on the operator-native resources the provider produces,
 and verify status propagation back to the `Instance`.
 
-This directory is a **skeleton**: the `core/` suite ships with a single step
-that verifies the provider deployment is running, plus commented-out sample
-steps showing how to test the full Instance lifecycle. Flesh it out as you
-implement your provider. For a complete, real-world example see the
+There are two suites:
+
+- **`core/`** — the provider's own translation and status logic. Deployed
+  with the OpenSearch operator disabled (`deploy-provider-ci`); tests patch
+  the `OpenSearchCluster` status directly to simulate operator readiness.
+  Fast and deterministic.
+- **`e2e-cluster/`** — the real OpenSearch operator (`deploy-provider-e2e`):
+  an Instance must reach `Ready` against a genuinely running OpenSearch
+  cluster, and the connection details the provider publishes are checked
+  against the live cluster's REST API. Slower (a real OpenSearch pod has to
+  start), but catches anything `core`'s faked status can't — e.g. a CRD
+  field the real operator rejects, or connection details that don't actually
+  connect.
+
+For a complete, real-world example of a larger suite set see the
 [provider-percona-server-mongodb test suites](https://github.com/openeverest/provider-percona-server-mongodb/tree/main/test/integration).
 
 ## Layout
@@ -22,6 +33,9 @@ test/
       chainsaw-test.yaml       # Test definition: ordered steps
       00-assert.yaml           # Step files, prefixed by execution order
       ...
+    e2e-cluster/                # Real-operator suite (create, wait for real Ready, verify connection, delete)
+      chainsaw-test.yaml
+      ...
 ```
 
 Each suite is a directory containing one `chainsaw-test.yaml` plus the
@@ -34,11 +48,15 @@ directories (e.g. `backup/`, `monitoring/`) and wire each one to its own
 - **Numbered step files** — the `NN-` prefix mirrors the step order in
   `chainsaw-test.yaml`: `10-create-instance.yaml` applies a manifest,
   `10-assert.yaml` asserts the expected outcome of that step.
-- **Simulate the operator** — deploy the provider with your DB operator
-  scaled to 0 (see `deploy-provider-ci` in the Makefile). Tests then patch the
-  operator-native CR status (`kubectl patch --subresource status`) to simulate
-  readiness. This keeps suites fast and deterministic: you are testing the
-  *provider's* translation and status logic, not the operator itself.
+- **Simulate the operator, except where it matters** — most suites deploy
+  with your DB operator disabled (see `deploy-provider-ci` in the Makefile)
+  and patch the operator-native CR status (`kubectl patch --subresource
+  status`) to simulate readiness. This keeps them fast and deterministic:
+  you are testing the *provider's* translation and status logic, not the
+  operator itself. Keep at least one suite (`e2e-cluster` here) against the
+  real operator (`deploy-provider-e2e`) so a CRD shape the real operator
+  actually rejects, or connection details that don't actually connect, don't
+  slip through unnoticed.
 - **Assert both directions** — after applying an `Instance`, assert the
   operator-native CR spec the provider must produce; after patching the
   operator CR status, assert the `Instance` reaches `phase: Running`.
@@ -59,8 +77,9 @@ go install github.com/kyverno/chainsaw@latest
 Then:
 
 ```bash
-make test-integration        # all suites
-make test-integration-core   # just the core suite
+make test-integration             # all suites
+make test-integration-core        # just the core suite
+make test-integration-e2e-cluster # just the e2e-cluster suite (needs the real operator deployed: deploy-provider-e2e)
 ```
 
 ## Running in CI

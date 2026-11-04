@@ -155,6 +155,10 @@ test-integration: ## Run all integration tests against the current cluster.
 test-integration-core: ## Run core integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/core
 
+.PHONY: test-integration-e2e-cluster
+test-integration-e2e-cluster: ## Run e2e-cluster integration tests (real OpenSearch operator, see deploy-provider-e2e).
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/e2e-cluster
+
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
 	k3d image import ${IMG} -c ${K3D_CLUSTER_NAME}

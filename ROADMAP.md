@@ -140,7 +140,13 @@ UI or API, connect to it, scale it, and delete it.
 **Quality**
 - [x] Unit tests: spec mapping, resources defaulting, status mapping, validation, provider-runtime conformance
 - [x] Chainsaw integration suite `core`: create → assert CR shape → ready → scale → delete (operator disabled, CR asserted)
-- [ ] Chainsaw e2e-cluster suite with the real operator on k3d: Instance reaches `Ready`, connection works (verified manually)
+- [x] Chainsaw `e2e-cluster` suite with the real operator on k3d (`deploy-provider-e2e`): Instance reaches
+  `Ready` against a genuinely running OpenSearchCluster (no status faking, unlike `core`), and the published
+  `<name>-conn` Secret is used to actually curl `_cluster/health` from inside the cluster. Verified manually
+  end to end (provider + real operator deployed, Instance created, reached `Ready` in ~6 min, connection
+  curl returned `status: green`, delete cascaded and removed the admin secret) — this also showed the suite
+  needs only the provider itself, not the separate OpenEverest controller-manager CI otherwise deploys for
+  every suite; left that step in CI unchanged since removing it is out of scope here
 - [x] README capabilities table + compatibility table filled in; `examples/instance-simple.yaml`
 
 ### Capabilities at MVP
