@@ -270,11 +270,11 @@ code generation, and the backup/restore interfaces are documented once for all p
 
 - **Unit tests** — `make test-unit`, including the provider-runtime conformance checks
   that every UI field and supported field is consumed by `Sync`.
-- **Integration tests** — chainsaw suites under `test/integration/`. The `core/` suite runs
-  without the operator and simulates it by patching the `OpenSearchCluster` status. See
-  [test/integration/README.md](test/integration/README.md).
+- **Integration tests** — chainsaw suites under `test/integration/` (operator simulated by
+  patching `OpenSearchCluster` status) and `test/e2e-cluster/` (the real OpenSearch operator).
+  See [test/README.md](test/README.md).
 - **CI** — `.github/workflows/ci.yaml` runs lint, build, unit tests, generated-file
-  verification, Helm lint, and each integration suite on every pull request.
+  verification, Helm lint, and every integration and e2e-cluster suite on every pull request.
 
 ## Troubleshooting
 
