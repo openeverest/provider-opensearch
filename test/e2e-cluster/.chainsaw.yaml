@@ -16,7 +16,8 @@ spec:
     delete: 60s
     error: 60s
     exec: 60s
-    cleanup: 60s
+    # Deleting a namespace waits for OpenSearch pods and their volumes.
+    cleanup: 5m
   cleanup:
     skipDelete: false
   report:

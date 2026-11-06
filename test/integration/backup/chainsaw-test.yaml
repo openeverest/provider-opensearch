@@ -1,0 +1,111 @@
+---
+# Backup configuration without the OpenSearch operator (see
+# deploy-provider-ci): what Sync produces for spec.backup, and the Backup
+# lifecycle before the cluster is running. Taking and restoring snapshots
+# needs a real cluster: see test/e2e-cluster/backup.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: backup
+spec:
+  description: |
+    Snapshot repositories, keystore and plugin for spec.backup.storages, one
+    SM policy per schedule with retention, removing a schedule, and a Backup
+    waiting for the cluster.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,backups -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters,opensearchsnapshotpolicies -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 100
+
+  steps:
+    - name: provider-deployed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    - name: backup-waits-for-the-cluster
+      try:
+        - apply:
+            resource:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: Backup
+              metadata:
+                name: on-demand
+              spec:
+                classRef:
+                  name: opensearch-snapshot
+                storageRef:
+                  name: s3
+                origin:
+                  type: Instance
+                  instanceRef:
+                    name: test-instance
+        - assert:
+            resource:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: Backup
+              metadata:
+                name: on-demand
+              status:
+                state: Pending
+                message: waiting for the OpenSearch cluster to be running
+
+    - name: disable-a-schedule
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type json \
+                -p '[{"op":"replace","path":"/spec/backup/storages/0/schedules/0/enabled","value":false}]'
+        - error:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpensearchSnapshotPolicy
+              metadata:
+                name: test-instance-daily
+        - assert:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpensearchSnapshotPolicy
+              metadata:
+                name: test-instance-monthly
+
+    - name: disable-backups
+      try:
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                backup:
+                  enabled: false
+        - error:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpensearchSnapshotPolicy
+              metadata:
+                name: test-instance-monthly
+        - assert:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpenSearchCluster
+              metadata:
+                name: test-instance
+              spec:
+                general:
+                  (snapshotRepositories == null): true
+                  (pluginsList == null): true

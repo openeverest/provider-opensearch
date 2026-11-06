@@ -1,0 +1,12 @@
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: in-place
+spec:
+  instanceRef:
+    name: source
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: on-demand

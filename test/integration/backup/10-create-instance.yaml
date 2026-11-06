@@ -1,0 +1,60 @@
+# S3-compatible storage and an Instance backing up to it on two schedules.
+# The opensearch-snapshot BackupClass comes with the provider chart.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-credentials
+stringData:
+  AWS_ACCESS_KEY_ID: access
+  AWS_SECRET_ACCESS_KEY: secret
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: BackupStorage
+metadata:
+  name: s3
+spec:
+  type: s3
+  s3:
+    bucket: backups
+    region: us-east-1
+    endpointURL: http://s3.example.com:8333
+    forcePathStyle: true
+    credentialsSecretRef:
+      name: s3-credentials
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+spec:
+  providerRef:
+    name: opensearch
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi
+  backup:
+    enabled: true
+    classRef:
+      name: opensearch-snapshot
+    storages:
+      - storageRef:
+          name: s3
+        schedules:
+          - name: daily
+            enabled: true
+            cron: "0 2 * * *"
+            retention:
+              type: count
+              count: 7
+          - name: monthly
+            enabled: true
+            cron: "0 3 1 * *"
+            retention:
+              type: time
+              duration: 2m

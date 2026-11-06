@@ -5,6 +5,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Nightly at 03:00 UTC on the default branch.
+    - cron: "0 3 * * *"
 
 # Cancel in-progress runs for the same branch/PR when a new commit arrives.
 # On main we let runs queue so every commit is validated.
@@ -30,7 +33,7 @@ jobs:
 
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.11.3
+          version: v2.14.0
 
   build:
     name: Build
@@ -104,6 +107,24 @@ jobs:
       suite: core
     secrets: inherit
 
+  test-integration-features:
+    name: Integration / features
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-features
+      suite: features
+    secrets: inherit
+
+  test-integration-backup:
+    name: Integration / backup
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-backup
+      suite: backup
+    secrets: inherit
+
   # Unlike the integration suites above, e2e-cluster deploys the real
   # OpenSearch operator (deploy-provider-e2e) instead of simulating it, so
   # the Instance must reach Ready against a genuinely running OpenSearch
@@ -117,4 +138,13 @@ jobs:
     with:
       make_target: test-e2e-cluster-core
       suite: core
+    secrets: inherit
+
+  test-e2e-cluster-backup:
+    name: E2E Cluster / backup
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-backup
+      suite: backup
     secrets: inherit

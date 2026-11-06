@@ -1,0 +1,35 @@
+# The configuration is flattened into additionalConfig (large integers stay
+# integers), Dashboards runs the bundle's version with TLS, and the REST API
+# is exposed through a separate LoadBalancer Service.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  general:
+    version: 3.7.0
+  nodePools:
+    - component: nodes
+      additionalConfig:
+        indices.query.bool.max_clause_count: "10000000"
+        cluster.routing.allocation.disk.threshold_enabled: "false"
+  dashboards:
+    enable: true
+    version: 3.7.0
+    image: opensearchproject/opensearch-dashboards:3.7.0
+    replicas: 2
+    tls:
+      enable: true
+      generate: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-instance-exposed
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 9200
+  selector:
+    opensearch.org/opensearch-cluster: test-instance

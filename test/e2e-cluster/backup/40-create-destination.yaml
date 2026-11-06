@@ -1,0 +1,30 @@
+# A new Instance seeded from the source's backup. It lists the storage too:
+# the read-only repository for the source's snapshots uses its credentials.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: destination
+spec:
+  providerRef:
+    name: opensearch
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: 500m
+          memory: 2Gi
+      storage:
+        size: 5Gi
+  backup:
+    enabled: true
+    classRef:
+      name: opensearch-snapshot
+    storages:
+      - storageRef:
+          name: seaweedfs
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: on-demand

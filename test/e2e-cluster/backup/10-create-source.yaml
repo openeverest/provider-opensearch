@@ -1,0 +1,32 @@
+# The source Instance: backups to SeaweedFS, plus a schedule that runs every
+# minute so a scheduled snapshot shows up within the test.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: source
+spec:
+  providerRef:
+    name: opensearch
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: 500m
+          memory: 2Gi
+      storage:
+        size: 5Gi
+  backup:
+    enabled: true
+    classRef:
+      name: opensearch-snapshot
+    storages:
+      - storageRef:
+          name: seaweedfs
+        schedules:
+          - name: every-minute
+            enabled: true
+            cron: "* * * * *"
+            retention:
+              type: count
+              count: 2

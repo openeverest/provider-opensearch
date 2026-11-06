@@ -1,0 +1,14 @@
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: on-demand
+spec:
+  classRef:
+    name: opensearch-snapshot
+  storageRef:
+    name: seaweedfs
+  deletionPolicy: Delete
+  origin:
+    type: Instance
+    instanceRef:
+      name: source

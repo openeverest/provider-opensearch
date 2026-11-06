@@ -1,0 +1,9 @@
+# Dashboards is turned off in place: the block stays, disabled, since the
+# OpenSearchCluster CRD rejects it without its resources.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  dashboards:
+    (enable == null || enable == `false`): true

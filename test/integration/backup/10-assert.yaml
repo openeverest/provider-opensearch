@@ -1,0 +1,66 @@
+# The storage becomes a snapshot repository under the Instance's own path,
+# with its credentials in the keystore and the repository-s3 plugin.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  general:
+    pluginsList:
+      - repository-s3
+    snapshotRepositories:
+      - name: s3
+        type: s3
+        settings:
+          bucket: backups
+          client: s3
+          region: us-east-1
+          endpoint: http://s3.example.com:8333
+          path_style_access: "true"
+          (base_path == join('/', [$namespace, 'test-instance'])): true
+    keystore:
+      - secret:
+          name: s3-credentials
+        keyMappings:
+          AWS_ACCESS_KEY_ID: s3.client.s3.access_key
+          AWS_SECRET_ACCESS_KEY: s3.client.s3.secret_key
+---
+# One SM policy per schedule. Snapshot names become Backup CR names, so the
+# date format must not contain colons; min_count is set explicitly, or the
+# operator rewrites the policy forever and it never runs.
+apiVersion: opensearch.org/v1
+kind: OpensearchSnapshotPolicy
+metadata:
+  name: test-instance-daily
+spec:
+  opensearchCluster:
+    name: test-instance
+  policyName: test-instance-daily
+  enabled: true
+  snapshotConfig:
+    repository: s3
+    indices: "*"
+    dateFormat: yyyyMMdd-HHmmss
+    dateFormatTimezone: UTC
+  creation:
+    schedule:
+      cron:
+        expression: 0 2 * * *
+        timezone: UTC
+  deletion:
+    schedule:
+      cron:
+        expression: 0 2 * * *
+    deleteCondition:
+      maxCount: 7
+      minCount: 1
+---
+apiVersion: opensearch.org/v1
+kind: OpensearchSnapshotPolicy
+metadata:
+  name: test-instance-monthly
+spec:
+  deletion:
+    deleteCondition:
+      maxAge: 60d
+      minCount: 1

@@ -26,17 +26,21 @@ There are two sibling suite directories, mirroring
 ```
 test/
   vars.sh                      # Pinned operator/engine versions (sourced by make)
+  testdata/
+    seaweedfs.yaml             # In-cluster S3 (HTTP) for the e2e backup suite
   integration/
     .chainsaw.yaml             # Shared chainsaw configuration (timeouts, reports)
     core/                      # Core lifecycle suite (create/update/delete)
       chainsaw-test.yaml       # Test definition: ordered steps
       00-assert.yaml           # Step files, prefixed by execution order
       ...
+    features/                  # Configuration, external access, Dashboards, upgrade, admission rejections
+    backup/                    # Snapshot repositories, keystore, SM policies and retention
   e2e-cluster/
     .chainsaw.yaml             # Separate config: longer default timeouts
-    core/                      # Create, wait for real Ready, verify connection, delete
-      chainsaw-test.yaml
-      ...
+    lib/                       # toolbox pod + opensearch.sh: TLS-verified REST calls via <name>-conn
+    core/                      # Real Ready, TLS-verified connection, scale 1 -> 3, delete removes PVCs
+    backup/                    # Backup, in-place restore, new Instance from backup, schedule mirroring
 ```
 
 Each suite is a directory containing one `chainsaw-test.yaml` plus the
@@ -83,8 +87,11 @@ Then:
 ```bash
 make test-integration        # all integration suites (deploy-provider-ci)
 make test-integration-core   # just the core integration suite
+make test-integration-features
+make test-integration-backup
 make test-e2e-cluster        # all e2e-cluster suites (deploy-provider-e2e)
 make test-e2e-cluster-core   # just the core e2e-cluster suite
+make test-e2e-cluster-backup # backup and restore; deploys SeaweedFS itself
 ```
 
 ## Running in CI
@@ -98,6 +105,7 @@ two reusable workflows:
   (deploys with `deploy-provider-e2e`, the real operator)
 
 Both provision a k3d cluster, build and import the provider image, build and
-deploy the OpenEverest controller, and invoke the suite's Make target. To add
+deploy the OpenEverest controller, and invoke the suite's Make target. Every
+suite runs on each pull request, on every push to `main` and nightly. To add
 a suite to CI, add a job to `ci.yaml` using the workflow that matches where
 the suite lives.

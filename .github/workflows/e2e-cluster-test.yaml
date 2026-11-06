@@ -71,8 +71,6 @@ jobs:
 
       - name: Install CRDs
         run: make install-crds
-        env:
-          OPENEVEREST_BRANCH: ${{ env.OPENEVEREST_BRANCH }}
 
       - name: Deploy provider with the real OpenSearch operator
         run: make deploy-provider-e2e

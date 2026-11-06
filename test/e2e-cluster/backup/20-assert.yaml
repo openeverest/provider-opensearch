@@ -1,0 +1,9 @@
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: on-demand
+status:
+  state: Succeeded
+  (startedAt != null): true
+  (completedAt != null): true
+  (to_number(size) > `0`): true
