@@ -5,12 +5,12 @@ import (
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
-
-	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
 // supportedServiceTypes are the engine.service.serviceType values the
@@ -73,19 +73,44 @@ func syncExposedService(c *controller.Context, engine corev1alpha1.ComponentSpec
 	return c.Apply(exposed)
 }
 
+// externalHost returns the address the LoadBalancer assigned to the exposed
+// Service, or "" when the cluster is not exposed that way or the address is
+// not assigned yet. NodePort has no single stable address to publish.
+func externalHost(c *controller.Context) (string, error) {
+	svc := &corev1.Service{}
+	if err := c.Get(svc, exposedServiceName(c.Name())); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get exposed service: %w", err)
+	}
+	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		return "", nil
+	}
+	for _, ingress := range svc.Status.LoadBalancer.Ingress {
+		if ingress.Hostname != "" {
+			return ingress.Hostname, nil
+		}
+		if ingress.IP != "" {
+			return ingress.IP, nil
+		}
+	}
+	return "", nil
+}
+
 func deleteExposedService(c *controller.Context) error {
 	svc := &corev1.Service{ObjectMeta: c.ObjectMeta(exposedServiceName(c.Name()))}
 	return c.Delete(svc)
 }
 
 // validateServiceType rejects a service type the provider does not support.
-func validateServiceType(svc *corev1alpha1.Service) error {
-	if svc == nil || svc.ServiceType == "" {
+func validateServiceType(path *field.Path, svc *corev1alpha1.Service) field.ErrorList {
+	if svc == nil || svc.ServiceType == "" || slices.Contains(supportedServiceTypes, svc.ServiceType) {
 		return nil
 	}
-	if !slices.Contains(supportedServiceTypes, svc.ServiceType) {
-		return fmt.Errorf("%s: unsupported service type %q: supported types are %v",
-			common.ComponentEngine, svc.ServiceType, supportedServiceTypes)
+	supported := make([]string, 0, len(supportedServiceTypes))
+	for _, t := range supportedServiceTypes {
+		supported = append(supported, string(t))
 	}
-	return nil
+	return field.ErrorList{field.NotSupported(path, svc.ServiceType, supported)}
 }

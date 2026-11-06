@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
@@ -106,7 +107,7 @@ func TestValidateServiceType(t *testing.T) {
 	tests := []struct {
 		name    string
 		svc     *corev1alpha1.Service
-		wantErr string
+		wantErr bool
 	}{
 		{name: "nil", svc: nil},
 		{name: "empty", svc: &corev1alpha1.Service{}},
@@ -116,18 +117,19 @@ func TestValidateServiceType(t *testing.T) {
 		{
 			name:    "ExternalName is unsupported",
 			svc:     &corev1alpha1.Service{ServiceType: corev1.ServiceTypeExternalName},
-			wantErr: "unsupported service type",
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateServiceType(tt.svc)
+			errs := validateServiceType(field.NewPath("spec", "components").Key("engine").Child("service", "serviceType"), tt.svc)
 
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
+			if !tt.wantErr {
+				assert.Empty(t, errs)
 				return
 			}
-			assert.ErrorContains(t, err, tt.wantErr)
+			require.Len(t, errs, 1)
+			assert.Equal(t, "spec.components[engine].service.serviceType", errs[0].Field)
 		})
 	}
 }

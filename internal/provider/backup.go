@@ -7,6 +7,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
+
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 )
@@ -29,6 +31,15 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 	l := log.FromContext(c.Context())
 	l.Info("Syncing backup", "name", backup.Name)
 
+	if ready, err := clusterReady(c); err != nil {
+		return controller.BackupExecutionStatus{}, err
+	} else if !ready {
+		return controller.BackupExecutionStatus{
+			State:   backupv1alpha1.BackupStatePending,
+			Message: "waiting for the OpenSearch cluster to be running",
+		}, nil
+	}
+
 	osClient, err := newOpenSearchClientFunc(c)
 	if err != nil {
 		return controller.BackupExecutionStatus{}, fmt.Errorf("build OpenSearch client: %w", err)
@@ -45,7 +56,9 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 				Message: fmt.Sprintf("starting snapshot: %v", err),
 			}, nil
 		}
-		return controller.BackupExecutionStatus{State: backupv1alpha1.BackupStatePending}, nil
+		// StartedAt records that a snapshot may exist; CleanupBackup relies on it.
+		now := metav1.Now()
+		return controller.BackupExecutionStatus{State: backupv1alpha1.BackupStateRunning, StartedAt: &now}, nil
 	}
 	if err != nil {
 		return controller.BackupExecutionStatus{}, fmt.Errorf("get snapshot %q in repository %q: %w", snap, repo, err)
@@ -95,6 +108,21 @@ func (p *Provider) CleanupBackup(c *controller.Context, backup *backupv1alpha1.B
 	l.Info("Cleaning up backup", "name", backup.Name)
 
 	if backup.Spec.DeletionPolicy == backupv1alpha1.BackupDeletionPolicyRetain {
+		return true, nil
+	}
+
+	// No snapshot was ever started: nothing to delete, and the cluster may
+	// never become reachable (e.g. the Instance is being deleted too).
+	if backup.Status.StartedAt == nil && backup.Spec.ScheduleName == "" {
+		return true, nil
+	}
+
+	// Without its cluster there is no API to delete the snapshot through.
+	// The data stays in the bucket, under the Instance's base path.
+	if exists, err := c.Exists(&opensearchv1.OpenSearchCluster{}, c.Name()); err != nil {
+		return false, err
+	} else if !exists {
+		l.Info("OpenSearchCluster is gone, leaving the snapshot in the repository", "name", backup.Name)
 		return true, nil
 	}
 

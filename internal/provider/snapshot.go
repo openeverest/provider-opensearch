@@ -57,22 +57,9 @@ func buildSnapshotRepository(c *controller.Context, entry corev1alpha1.InstanceB
 	if err != nil {
 		return opensearchv1.SnapshotRepoConfig{}, opensearchv1.KeystoreValue{}, fmt.Errorf("backup storage %q: %w", name, err)
 	}
-	if bs.Spec.Type != backupv1alpha1.BackupStorageTypeS3 || bs.Spec.S3 == nil {
-		return opensearchv1.SnapshotRepoConfig{}, opensearchv1.KeystoreValue{}, fmt.Errorf("backup storage %q: only S3-compatible storage is supported", name)
-	}
-	s3 := bs.Spec.S3
-
-	client := snapshotClientName(name)
-	settings := map[string]string{
-		"bucket": s3.Bucket,
-		"client": client,
-		"region": s3.Region,
-	}
-	if s3.EndpointURL != "" {
-		settings["endpoint"] = s3.EndpointURL
-	}
-	if s3.ForcePathStyle != nil {
-		settings["path_style_access"] = fmt.Sprintf("%t", *s3.ForcePathStyle)
+	settings, err := s3RepositorySettings(bs, repositoryBasePath(c.Namespace(), c.Name()))
+	if err != nil {
+		return opensearchv1.SnapshotRepoConfig{}, opensearchv1.KeystoreValue{}, err
 	}
 
 	repo := opensearchv1.SnapshotRepoConfig{
@@ -81,8 +68,9 @@ func buildSnapshotRepository(c *controller.Context, entry corev1alpha1.InstanceB
 		Settings: settings,
 	}
 
+	client := snapshotClientName(name)
 	keystore := opensearchv1.KeystoreValue{
-		Secret: corev1.LocalObjectReference{Name: s3.CredentialsSecretRef.Name},
+		Secret: corev1.LocalObjectReference{Name: bs.Spec.S3.CredentialsSecretRef.Name},
 		KeyMappings: map[string]string{
 			"AWS_ACCESS_KEY_ID":     fmt.Sprintf("s3.client.%s.access_key", client),
 			"AWS_SECRET_ACCESS_KEY": fmt.Sprintf("s3.client.%s.secret_key", client),
@@ -90,4 +78,34 @@ func buildSnapshotRepository(c *controller.Context, entry corev1alpha1.InstanceB
 	}
 
 	return repo, keystore, nil
+}
+
+// repositoryBasePath is where an Instance keeps its snapshots in a bucket.
+// OpenSearch corrupts a repository that two clusters write to, so every
+// Instance writes under its own path, even when they share a BackupStorage.
+func repositoryBasePath(namespace, instance string) string {
+	return namespace + "/" + instance
+}
+
+// s3RepositorySettings returns the repository-s3 settings for a backup
+// storage. The client, named after the storage, holds its credentials in the
+// keystore.
+func s3RepositorySettings(bs *backupv1alpha1.BackupStorage, basePath string) (map[string]string, error) {
+	if bs.Spec.Type != backupv1alpha1.BackupStorageTypeS3 || bs.Spec.S3 == nil {
+		return nil, fmt.Errorf("backup storage %q: only S3-compatible storage is supported", bs.Name)
+	}
+	s3 := bs.Spec.S3
+	settings := map[string]string{
+		"bucket":    s3.Bucket,
+		"client":    snapshotClientName(bs.Name),
+		"region":    s3.Region,
+		"base_path": basePath,
+	}
+	if s3.EndpointURL != "" {
+		settings["endpoint"] = s3.EndpointURL
+	}
+	if s3.ForcePathStyle != nil {
+		settings["path_style_access"] = fmt.Sprintf("%t", *s3.ForcePathStyle)
+	}
+	return settings, nil
 }

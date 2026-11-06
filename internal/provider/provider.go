@@ -1,16 +1,24 @@
 package provider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
+	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
@@ -33,18 +41,22 @@ func New() *Provider {
 			ProviderName: common.ProviderName,
 			SchemeFuncs: []func(*runtime.Scheme) error{
 				opensearchv1.AddToScheme,
+				// Read by ValidateReferences to check volume expansion support.
+				storagev1.AddToScheme,
+				// The Dashboards Deployment the operator leaves behind is deleted by Sync.
+				appsv1.AddToScheme,
 			},
 			WatchConfigs: []controller.WatchConfig{
 				// No predicate: status changes (phase, health) must trigger a reconcile.
 				controller.WatchOwned(&opensearchv1.OpenSearchCluster{}),
+				// The connection details publish the address a LoadBalancer is
+				// given, which arrives after the Service is created.
+				controller.WatchOwned(&corev1.Service{}),
+				// Status reports Restoring while a Restore of the Instance runs.
+				controller.WatchExternal(&backupv1alpha1.Restore{}, handler.EnqueueRequestsFromMapFunc(restoreInstance)),
 			},
 		},
 	}
-}
-
-// Validate checks if the Instance spec is valid.
-func (p *Provider) Validate(c *controller.Context) error {
-	return validate(c)
 }
 
 // Sync creates or updates the OpenSearchCluster for the Instance.
@@ -64,9 +76,9 @@ func (p *Provider) Sync(c *controller.Context) error {
 		image = controller.GetImageForVersion(spec, common.ComponentEngine, version)
 	}
 
-	additionalConfig, err := resolveAdditionalConfig(c, engine)
+	additionalConfig, err := resolveAdditionalConfig(engine)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: configuration: %w", common.ComponentEngine, err)
 	}
 
 	snapshotRepos, keystore, backupPlugins, err := buildBackupConfig(c)
@@ -79,15 +91,6 @@ func (p *Provider) Sync(c *controller.Context) error {
 		Spec:       buildClusterSpec(c.Name(), engine, version, image, additionalConfig, snapshotRepos, keystore, backupPlugins),
 	}
 
-	if dashboards, ok := c.Instance().Spec.Components[common.ComponentDashboards]; ok {
-		dVersion := resolveVersion(spec, dashboards, common.ComponentTypeDashboards)
-		dImage := dashboards.Image
-		if dImage == "" {
-			dImage = controller.GetImageForVersion(spec, common.ComponentDashboards, dVersion)
-		}
-		cluster.Spec.Dashboards = buildDashboardsConfig(dashboards, dVersion, dImage)
-	}
-
 	// Apply replaces metadata wholesale; keep the operator's finalizer so it
 	// is not stripped and re-added on every reconcile.
 	existing := &opensearchv1.OpenSearchCluster{}
@@ -95,6 +98,18 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Finalizers = existing.Finalizers
 	} else if !apierrors.IsNotFound(err) {
 		return err
+	}
+
+	if dashboards, ok := c.Instance().Spec.Components[common.ComponentDashboards]; ok {
+		dVersion := resolveVersion(spec, dashboards, common.ComponentTypeDashboards)
+		dImage := dashboards.Image
+		if dImage == "" {
+			dImage = controller.GetImageForVersion(spec, common.ComponentDashboards, dVersion)
+		}
+		cluster.Spec.Dashboards = buildDashboardsConfig(dashboards, dVersion, dImage)
+	} else if existing.Spec.Dashboards.Enable || existing.Spec.Dashboards.Version != "" {
+		// Once configured, the block stays in every apply, disabled.
+		cluster.Spec.Dashboards = disabledDashboardsConfig(existing.Spec.Dashboards)
 	}
 
 	if err := c.Apply(cluster); err != nil {
@@ -105,10 +120,15 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	if err := syncScheduledBackups(c); err != nil {
-		return err
+	if _, ok := c.Instance().Spec.Components[common.ComponentDashboards]; !ok {
+		if err := deleteDashboards(c); err != nil {
+			return err
+		}
 	}
-	if err := mirrorScheduledBackups(c); err != nil {
+
+	// Scheduled snapshots are mirrored into Backup CRs by the snapshotMirror
+	// loop, since they appear without any event on the Instance.
+	if err := syncScheduledBackups(c); err != nil {
 		return err
 	}
 
@@ -167,9 +187,52 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 			return controller.Status{}, fmt.Errorf("get admin credentials secret: %w", err)
 		}
 		details = connectionDetails(cluster, secret)
+		if host, err := externalHost(c); err != nil {
+			return controller.Status{}, err
+		} else if host != "" {
+			details = withHost(details, host)
+		}
 	}
 
-	return clusterStatus(cluster, details), nil
+	status := clusterStatus(cluster, details)
+	if status.Phase == corev1alpha1.InstancePhaseReady {
+		restoring, err := activeRestore(c)
+		if err != nil {
+			return controller.Status{}, err
+		}
+		if restoring != "" {
+			restoringStatus := controller.Restoring(fmt.Sprintf("Restoring from Restore %q", restoring))
+			restoringStatus.ConnectionDetails = details
+			return restoringStatus, nil
+		}
+	}
+	return status, nil
+}
+
+// restoreInstance maps a Restore to the Instance it restores into.
+func restoreInstance(_ context.Context, obj client.Object) []reconcile.Request {
+	restore, ok := obj.(*backupv1alpha1.Restore)
+	if !ok || restore.Spec.InstanceRef.Name == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{
+		Namespace: restore.Namespace, Name: restore.Spec.InstanceRef.Name,
+	}}}
+}
+
+// activeRestore returns the name of a Restore of this Instance that has not
+// finished yet, or "" when there is none.
+func activeRestore(c *controller.Context) (string, error) {
+	restores, err := c.RestoresForInstance()
+	if err != nil {
+		return "", fmt.Errorf("list restores: %w", err)
+	}
+	for _, r := range restores {
+		if r.DeletionTimestamp.IsZero() && r.Status.State == backupv1alpha1.RestoreStateRunning {
+			return r.Name, nil
+		}
+	}
+	return "", nil
 }
 
 // Cleanup deletes the OpenSearchCluster and the operator-generated secrets

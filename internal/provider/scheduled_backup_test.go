@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
@@ -49,6 +50,9 @@ func TestSyncScheduledBackups(t *testing.T) {
 		assert.Equal(t, "my-search-daily", got.Spec.PolicyName)
 		assert.Equal(t, "my-storage", got.Spec.SnapshotConfig.Repository)
 		assert.Equal(t, "0 2 * * *", got.Spec.Creation.Schedule.Cron.Expression)
+		// SM's default date format puts colons in snapshot names, which
+		// cannot become Backup CR names.
+		assert.Equal(t, "yyyyMMdd-HHmmss", got.Spec.SnapshotConfig.DateFormat)
 		assert.Nil(t, got.Spec.Deletion)
 	})
 
@@ -65,9 +69,10 @@ func TestSyncScheduledBackups(t *testing.T) {
 		assert.Empty(t, list.Items)
 	})
 
-	t.Run("retention copies sets a deletion condition", func(t *testing.T) {
+	t.Run("count retention sets maxCount", func(t *testing.T) {
 		in := instanceWithSchedule("my-storage", corev1alpha1.InstanceBackupSchedule{
-			Name: "daily", Enabled: true, Cron: "0 2 * * *", RetentionCopies: 7,
+			Name: "daily", Enabled: true, Cron: "0 2 * * *",
+			Retention: &corev1alpha1.BackupScheduleRetention{Type: corev1alpha1.BackupScheduleRetentionTypeCount, Count: ptr.To(int32(7))},
 		})
 		c, cl := newTestContext(t, in)
 
@@ -78,6 +83,27 @@ func TestSyncScheduledBackups(t *testing.T) {
 		require.NotNil(t, got.Spec.Deletion)
 		require.NotNil(t, got.Spec.Deletion.DeleteCondition.MaxCount)
 		assert.Equal(t, 7, *got.Spec.Deletion.DeleteCondition.MaxCount)
+		// OpenSearch defaults it; leaving it out makes the operator rewrite the
+		// policy on every reconcile, so SM never runs.
+		assert.Equal(t, 1, *got.Spec.Deletion.DeleteCondition.MinCount)
+		assert.Nil(t, got.Spec.Deletion.DeleteCondition.MaxAge)
+	})
+
+	t.Run("time retention sets maxAge in days", func(t *testing.T) {
+		in := instanceWithSchedule("my-storage", corev1alpha1.InstanceBackupSchedule{
+			Name: "daily", Enabled: true, Cron: "0 2 * * *",
+			Retention: &corev1alpha1.BackupScheduleRetention{Type: corev1alpha1.BackupScheduleRetentionTypeTime, Duration: "2w"},
+		})
+		c, cl := newTestContext(t, in)
+
+		require.NoError(t, syncScheduledBackups(c))
+
+		got := &opensearchv1.OpensearchSnapshotPolicy{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "my-search-daily"}, got))
+		require.NotNil(t, got.Spec.Deletion)
+		require.NotNil(t, got.Spec.Deletion.DeleteCondition.MaxAge)
+		assert.Equal(t, "14d", *got.Spec.Deletion.DeleteCondition.MaxAge)
+		assert.Equal(t, 1, *got.Spec.Deletion.DeleteCondition.MinCount)
 	})
 
 	t.Run("removing a schedule deletes its stale policy", func(t *testing.T) {
@@ -106,8 +132,8 @@ func TestMirrorScheduledBackups(t *testing.T) {
 	t.Run("matching successful snapshot is mirrored", func(t *testing.T) {
 		withTestOpenSearchClient(t, func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"snapshots":[
-				{"snapshot":"my-search-daily-2026.11.03","state":"SUCCESS"},
-				{"snapshot":"my-search-daily-2026.11.02","state":"IN_PROGRESS"},
+				{"snapshot":"my-search-daily-20261103-020000-abcd1234","state":"SUCCESS"},
+				{"snapshot":"my-search-daily-20261104-020000-efgh5678","state":"IN_PROGRESS"},
 				{"snapshot":"unrelated-snap","state":"SUCCESS"}
 			]}`))
 		})
@@ -119,13 +145,13 @@ func TestMirrorScheduledBackups(t *testing.T) {
 		require.NoError(t, mirrorScheduledBackups(c))
 
 		got := &backupv1alpha1.Backup{}
-		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "my-search-daily-2026.11.03"}, got))
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "my-search-daily-20261103-020000-abcd1234"}, got))
 		assert.Equal(t, "daily", got.Spec.ScheduleName)
 		assert.Equal(t, "my-storage", got.Spec.StorageRef.Name)
 		assert.Equal(t, backupClassName, got.Spec.ClassRef.Name)
 		assert.Equal(t, testName, got.Spec.Origin.InstanceRef.Name)
 
-		err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "my-search-daily-2026.11.02"}, &backupv1alpha1.Backup{})
+		err := cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "my-search-daily-20261104-020000-efgh5678"}, &backupv1alpha1.Backup{})
 		assert.True(t, client.IgnoreNotFound(err) == nil && err != nil, "in-progress snapshot must not be mirrored yet")
 
 		err = cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "unrelated-snap"}, &backupv1alpha1.Backup{})
@@ -134,7 +160,7 @@ func TestMirrorScheduledBackups(t *testing.T) {
 
 	t.Run("mirroring twice is idempotent", func(t *testing.T) {
 		withTestOpenSearchClient(t, func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"snapshots":[{"snapshot":"my-search-daily-2026.11.03","state":"SUCCESS"}]}`))
+			_, _ = w.Write([]byte(`{"snapshots":[{"snapshot":"my-search-daily-20261103-020000-abcd1234","state":"SUCCESS"}]}`))
 		})
 		in := instanceWithSchedule("my-storage", corev1alpha1.InstanceBackupSchedule{
 			Name: "daily", Enabled: true, Cron: "0 2 * * *",
@@ -144,11 +170,55 @@ func TestMirrorScheduledBackups(t *testing.T) {
 		require.NoError(t, mirrorScheduledBackups(c))
 		require.NoError(t, mirrorScheduledBackups(c))
 	})
+
+	t.Run("backup of a snapshot removed by retention is deleted", func(t *testing.T) {
+		withTestOpenSearchClient(t, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"snapshots":[{"snapshot":"my-search-daily-20261104-020000-efgh5678","state":"SUCCESS"}]}`))
+		})
+		in := instanceWithSchedule("my-storage", corev1alpha1.InstanceBackupSchedule{
+			Name: "daily", Enabled: true, Cron: "0 2 * * *",
+		})
+		mirrored := func(name, schedule string) *backupv1alpha1.Backup {
+			return &backupv1alpha1.Backup{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+				Spec: backupv1alpha1.BackupSpec{
+					Origin:       backupv1alpha1.BackupOrigin{Type: backupv1alpha1.BackupOriginTypeInstance, InstanceRef: &commonv1alpha1.ObjectRef{Name: testName}},
+					StorageRef:   commonv1alpha1.ObjectRef{Name: "my-storage"},
+					ScheduleName: schedule,
+				},
+				Status: backupv1alpha1.BackupStatus{State: backupv1alpha1.BackupStateSucceeded},
+			}
+		}
+		pruned := mirrored("my-search-daily-20261103-020000-abcd1234", "daily")
+		onDemand := mirrored("manual", "")
+		c, cl := newTestContext(t, in, pruned, onDemand)
+
+		require.NoError(t, mirrorScheduledBackups(c))
+
+		err := cl.Get(context.Background(), client.ObjectKeyFromObject(pruned), &backupv1alpha1.Backup{})
+		assert.True(t, client.IgnoreNotFound(err) == nil && err != nil, "Backup of a deleted snapshot must be removed")
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(onDemand), &backupv1alpha1.Backup{}),
+			"on-demand backups are never pruned")
+		require.NoError(t, cl.Get(context.Background(),
+			client.ObjectKey{Namespace: testNamespace, Name: "my-search-daily-20261104-020000-efgh5678"}, &backupv1alpha1.Backup{}))
+	})
+}
+
+func TestRetentionMaxAge(t *testing.T) {
+	for in, want := range map[string]string{"30d": "30d", "4w": "28d", "2m": "60d"} {
+		got, err := retentionMaxAge(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, got, in)
+	}
+	for _, in := range []string{"", "d", "0d", "5y", "xd"} {
+		_, err := retentionMaxAge(in)
+		assert.Error(t, err, in)
+	}
 }
 
 func TestValidateBackupSchedules(t *testing.T) {
 	t.Run("nil backup config", func(t *testing.T) {
-		assert.NoError(t, validateBackupSchedules(nil))
+		assert.Empty(t, validateBackupSchedules(nil))
 	})
 
 	t.Run("valid schedule name", func(t *testing.T) {
@@ -157,7 +227,7 @@ func TestValidateBackupSchedules(t *testing.T) {
 			Schedules:  []corev1alpha1.InstanceBackupSchedule{{Name: "daily-full"}},
 		}}}
 
-		assert.NoError(t, validateBackupSchedules(cfg))
+		assert.Empty(t, validateBackupSchedules(cfg))
 	})
 
 	t.Run("invalid schedule name", func(t *testing.T) {
@@ -166,6 +236,8 @@ func TestValidateBackupSchedules(t *testing.T) {
 			Schedules:  []corev1alpha1.InstanceBackupSchedule{{Name: "Daily_Full"}},
 		}}}
 
-		assert.ErrorContains(t, validateBackupSchedules(cfg), "invalid")
+		errs := validateBackupSchedules(cfg)
+		require.Len(t, errs, 1)
+		assert.Equal(t, "spec.backup.storages[0].schedules[0].name", errs[0].Field)
 	})
 }

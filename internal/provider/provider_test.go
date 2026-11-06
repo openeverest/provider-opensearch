@@ -6,8 +6,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,14 +31,16 @@ const (
 	testNamespace = "db"
 )
 
+// testScheme registers what the runtime registers (reconciler.New) and then
+// the provider's own Types, so a type Sync uses without registering it fails
+// here as it would in the cluster.
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, storagev1.AddToScheme(scheme))
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
-	require.NoError(t, opensearchv1.AddToScheme(scheme))
 	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+	require.NoError(t, New().Types()(scheme))
 	return scheme
 }
 
@@ -99,6 +102,16 @@ func newTestContext(t *testing.T, in *corev1alpha1.Instance, objs ...client.Obje
 		WithScheme(testScheme(t)).
 		WithObjects(objs...).
 		WithStatusSubresource(&opensearchv1.OpenSearchCluster{}).
+		// The runtime registers these indexes on the manager's cache.
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			if ref := obj.(*backupv1alpha1.Backup).Spec.Origin.InstanceRef; ref != nil {
+				return []string{ref.Name}
+			}
+			return nil
+		}).
+		WithIndex(&backupv1alpha1.Restore{}, controller.IndexRestoreInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Restore).Spec.InstanceRef.Name}
+		}).
 		Build()
 	return controller.NewContext(context.Background(), cl, in, common.ProviderName), cl
 }
@@ -154,7 +167,7 @@ func TestBuildNodePoolSchedulingPolicy(t *testing.T) {
 		Affinity:     affinity,
 		NodeSelector: map[string]string{"disk": "ssd"},
 		Tolerations:  []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpExists}},
-		TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+		TopologySpreadConstraints: &[]corev1.TopologySpreadConstraint{
 			{MaxSkew: 1, TopologyKey: corev1.LabelTopologyZone},
 		},
 	}
@@ -210,6 +223,41 @@ func TestSync(t *testing.T) {
 		assert.Equal(t, "opensearchproject/opensearch:3.7.0", *got.Spec.General.Image)
 		require.Len(t, got.OwnerReferences, 1)
 		assert.Equal(t, testName, got.OwnerReferences[0].Name)
+	})
+
+	t.Run("dropping dashboards deletes what the operator leaves behind", func(t *testing.T) {
+		deployment, service, certSecret, configMap := dashboardsObjectNames(testName)
+		meta := func(name string) metav1.ObjectMeta { return metav1.ObjectMeta{Name: name, Namespace: testNamespace} }
+		leftovers := []client.Object{
+			&appsv1.Deployment{ObjectMeta: meta(deployment)},
+			&corev1.Service{ObjectMeta: meta(service)},
+			&corev1.Secret{ObjectMeta: meta(certSecret)},
+			&corev1.ConfigMap{ObjectMeta: meta(configMap)},
+		}
+		c, cl := newTestContext(t, testInstance(validEngine()), leftovers...)
+
+		require.NoError(t, New().Sync(c))
+
+		for _, obj := range leftovers {
+			err := cl.Get(context.Background(), client.ObjectKeyFromObject(obj), obj)
+			assert.True(t, apierrors.IsNotFound(err), "%T %s must be deleted", obj, obj.GetName())
+		}
+	})
+
+	t.Run("dropping dashboards disables the block it applied", func(t *testing.T) {
+		withDashboards := testInstance(validEngine())
+		withDashboards.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](1), Resources: validEngine().Resources}
+		c, cl := newTestContext(t, withDashboards)
+		require.NoError(t, New().Sync(c))
+
+		without := testInstance(validEngine())
+		require.NoError(t, New().Sync(controller.NewContext(context.Background(), cl, without, common.ProviderName)))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.False(t, got.Spec.Dashboards.Enable)
+		// The CRD rejects a dashboards block without resources.
+		assert.NotNil(t, got.Spec.Dashboards.Resources.Requests)
 	})
 
 	t.Run("falls back to the default version", func(t *testing.T) {

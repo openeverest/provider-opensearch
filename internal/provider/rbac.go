@@ -36,3 +36,7 @@ package provider
 // +kubebuilder:rbac:groups=backup.openeverest.io,resources=backupstorages,verbs=get;list;watch
 // +kubebuilder:rbac:groups=backup.openeverest.io,resources=restores,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=backup.openeverest.io,resources=restores/status,verbs=get;update;patch
+// The operator never removes Dashboards once enabled; the provider deletes
+// these when the dashboards component is dropped.
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;delete

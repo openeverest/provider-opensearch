@@ -1,51 +1,74 @@
 package provider
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"sigs.k8s.io/yaml"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-opensearch/definition/components"
-	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
-// ownedConfigPrefixes are opensearch.yml dotted-key prefixes the provider and
-// operator own: TLS and the security plugin, and cluster discovery. A user
-// Configuration fragment cannot set keys under these.
-var ownedConfigPrefixes = []string{
-	"plugins.security.",
-	"discovery.",
+// ownedConfigKeys are opensearch.yml keys the provider and operator own:
+// TLS and the security plugin, cluster formation, node identity and roles,
+// listen addresses and ports, and data paths. A user Configuration fragment
+// cannot set them, or any key below them.
+var ownedConfigKeys = []string{
+	"plugins.security",
+	"discovery",
+	"cluster.initial_cluster_manager_nodes",
+	"cluster.initial_master_nodes",
+	"cluster.name",
+	"node",
+	"network",
+	"http.port",
+	"http.publish_port",
+	"transport.port",
+	"transport.publish_port",
+	"path",
 }
 
-// resolveAdditionalConfig parses the engine's Configuration parameter (an
-// opensearch.yml fragment) into the flat dotted-key map the operator's
-// nodePools[].additionalConfig expects. Returns nil if no configuration is
-// set.
-func resolveAdditionalConfig(c *controller.Context, engine corev1alpha1.ComponentSpec) (map[string]string, error) {
+// engineConfiguration returns the engine's Configuration parameter, an
+// opensearch.yml fragment, or "" when it is not set.
+func engineConfiguration(engine corev1alpha1.ComponentSpec) (string, error) {
+	if engine.Parameters == nil || len(engine.Parameters.Raw) == 0 {
+		return "", nil
+	}
 	var params components.OpensearchParameters
-	if !c.TryDecodeComponentParameters(engine, &params) || params.Configuration == "" {
-		return nil, nil
+	if err := json.Unmarshal(engine.Parameters.Raw, &params); err != nil {
+		return "", fmt.Errorf("decode parameters: %w", err)
+	}
+	return params.Configuration, nil
+}
+
+// resolveAdditionalConfig parses the engine's Configuration parameter into
+// the flat dotted-key map the operator's nodePools[].additionalConfig expects.
+// Returns nil if no configuration is set.
+func resolveAdditionalConfig(engine corev1alpha1.ComponentSpec) (map[string]string, error) {
+	configuration, err := engineConfiguration(engine)
+	if err != nil || configuration == "" {
+		return nil, err
 	}
 
 	var tree map[string]any
-	if err := yaml.Unmarshal([]byte(params.Configuration), &tree); err != nil {
-		return nil, fmt.Errorf("%s: configuration is not valid YAML: %w", common.ComponentEngine, err)
+	if err := yaml.Unmarshal([]byte(configuration), &tree); err != nil {
+		return nil, fmt.Errorf("not valid YAML: %w", err)
 	}
 
 	flat := map[string]string{}
 	if err := flattenConfig("", tree, flat); err != nil {
-		return nil, fmt.Errorf("%s: configuration: %w", common.ComponentEngine, err)
+		return nil, err
 	}
 
 	for key := range flat {
-		for _, prefix := range ownedConfigPrefixes {
-			if key == strings.TrimSuffix(prefix, ".") || strings.HasPrefix(key, prefix) {
-				return nil, fmt.Errorf("%s: configuration: %q is managed by the provider and cannot be set", common.ComponentEngine, key)
+		for _, owned := range ownedConfigKeys {
+			if key == owned || strings.HasPrefix(key, owned+".") {
+				return nil, fmt.Errorf("%q is managed by the provider and cannot be set", key)
 			}
 		}
 	}
@@ -79,6 +102,10 @@ func flattenConfig(prefix string, in map[string]any, out map[string]string) erro
 			return fmt.Errorf("%q: list values are not supported", key)
 		case nil:
 			out[key] = ""
+		case float64:
+			// YAML numbers decode as float64; 'f' keeps large integers out of
+			// exponent form, which OpenSearch would not parse as an integer.
+			out[key] = strconv.FormatFloat(v, 'f', -1, 64)
 		default:
 			out[key] = fmt.Sprintf("%v", v)
 		}

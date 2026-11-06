@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"errors"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -9,6 +11,7 @@ import (
 
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 )
 
 const (
@@ -125,7 +128,9 @@ func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec, additi
 	}
 	pool.NodeSelector = policy.NodeSelector
 	pool.Tolerations = policy.Tolerations
-	pool.TopologySpreadConstraints = policy.TopologySpreadConstraints
+	if policy.TopologySpreadConstraints != nil {
+		pool.TopologySpreadConstraints = *policy.TopologySpreadConstraints
+	}
 	pool.Affinity = policy.Affinity
 	if pool.Affinity == nil {
 		pool.Affinity = defaultAffinity(clusterName)
@@ -165,6 +170,34 @@ func buildDashboardsConfig(dashboards corev1alpha1.ComponentSpec, version, image
 		}
 	}
 	return cfg
+}
+
+// disabledDashboardsConfig turns Dashboards off by applying the running
+// block with enable false. Dropping the block from the apply instead would
+// remove the fields the provider owns, leaving dashboards.resources null,
+// which the OpenSearchCluster CRD rejects.
+func disabledDashboardsConfig(current opensearchv1.DashboardsConfig) opensearchv1.DashboardsConfig {
+	disabled := *current.DeepCopy()
+	disabled.Enable = false
+	return disabled
+}
+
+// dashboardsObjectNames are the objects the operator creates for Dashboards.
+// With dashboards.enable false it stops reconciling them but never removes
+// them, so the provider does when the component is dropped.
+func dashboardsObjectNames(clusterName string) (deployment, service, certSecret, configMap string) {
+	base := clusterName + "-dashboards"
+	return base, base, base + "-cert", base + "-config"
+}
+
+func deleteDashboards(c *controller.Context) error {
+	deployment, service, certSecret, configMap := dashboardsObjectNames(c.Name())
+	return errors.Join(
+		c.Delete(&appsv1.Deployment{ObjectMeta: c.ObjectMeta(deployment)}),
+		c.Delete(&corev1.Service{ObjectMeta: c.ObjectMeta(service)}),
+		c.Delete(&corev1.Secret{ObjectMeta: c.ObjectMeta(certSecret)}),
+		c.Delete(&corev1.ConfigMap{ObjectMeta: c.ObjectMeta(configMap)}),
+	)
 }
 
 // nodeResources returns the node pool resources. The operator sizes the JVM

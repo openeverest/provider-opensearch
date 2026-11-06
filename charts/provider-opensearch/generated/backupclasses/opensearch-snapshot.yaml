@@ -10,15 +10,25 @@ spec:
   executionMode: ProviderManaged
   parametersSchema:
     openAPIV3Schema:
+      description: |-
+        OpensearchSnapshotBackupParameters describes the parameters accepted by Backup CRs that
+        target this class (spec.parameters). Add fields the user can set per backup.
       type: object
   providerManaged:
     limits: {}
     pitrParametersSchema:
       openAPIV3Schema:
+        description: |-
+          OpensearchSnapshotPITRParameters describes the per-storage PITR parameters exposed to
+          Instance.spec.backup.storages[].pitr.parameters. Add fields a provider needs
+          to fine-tune its PITR pipeline (oplog span, compression, retention, etc.).
         type: object
     supportsPITR: false
   restoreParametersSchema:
     openAPIV3Schema:
+      description: |-
+        OpensearchSnapshotRestoreParameters describes the parameters accepted by Restore CRs that
+        target this class (spec.parameters). Add fields the user can set per restore.
       type: object
   supportedProviders:
     - opensearch

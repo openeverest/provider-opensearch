@@ -87,6 +87,9 @@ func TestBuildBackupConfig(t *testing.T) {
 			"region":            "us-east-1",
 			"endpoint":          "https://minio.example.com",
 			"path_style_access": "true",
+			// Each Instance writes under its own path: two clusters writing
+			// to one repository corrupt it.
+			"base_path": testNamespace + "/" + testName,
 		}, repos[0].Settings)
 
 		require.Len(t, keystore, 1)

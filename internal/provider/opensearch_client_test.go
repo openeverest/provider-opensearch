@@ -194,82 +194,106 @@ func TestOpenSearchClientRestoreSnapshot(t *testing.T) {
 }
 
 func TestOpenSearchClientRestoreRecoveryStatus(t *testing.T) {
-	t.Run("no target indices is done", func(t *testing.T) {
-		oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("should not call the API")
+	tests := []struct {
+		name     string
+		response string
+		status   int
+		indices  []string
+		want     restoreProgress
+	}{
+		{
+			name:    "no target indices is done",
+			indices: nil,
+			want:    restoreDone,
+		},
+		{
+			name:     "index not created yet",
+			response: `{}`,
+			indices:  []string{"idx-a"},
+			want:     restoreRunning,
+		},
+		{
+			name:    "404 while indices are recreated",
+			status:  http.StatusNotFound,
+			indices: []string{"idx-a"},
+			want:    restoreRunning,
+		},
+		{
+			name:     "primary still recovering from the snapshot",
+			response: `{"idx-a":{"shards":[{"type":"SNAPSHOT","stage":"INDEX","primary":true}]}}`,
+			indices:  []string{"idx-a"},
+			want:     restoreRunning,
+		},
+		{
+			name:     "one index restored, another not created yet",
+			response: `{"idx-a":{"shards":[{"type":"SNAPSHOT","stage":"DONE","primary":true}]}}`,
+			indices:  []string{"idx-a", "idx-b"},
+			want:     restoreRunning,
+		},
+		{
+			// Replicas of a restored index recover from a peer: they must
+			// not keep the restore running.
+			name: "primaries restored, replicas from peers",
+			response: `{"idx-a":{"shards":[{"type":"SNAPSHOT","stage":"DONE","primary":true},{"type":"PEER","stage":"DONE","primary":false}]},` +
+				`"idx-b":{"shards":[{"type":"SNAPSHOT","stage":"DONE","primary":true},{"type":"PEER","stage":"INDEX","primary":false}]}}`,
+			indices: []string{"idx-a", "idx-b"},
+			want:    restoreDone,
+		},
+		{
+			// A node restarted after the restore recovers its primaries from
+			// local disk.
+			name:     "primary recovered from local disk after the restore",
+			response: `{"idx-a":{"shards":[{"type":"EXISTING_STORE","stage":"DONE","primary":true}]}}`,
+			indices:  []string{"idx-a"},
+			want:     restoreDone,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if tt.indices == nil {
+					t.Fatal("should not call the API")
+				}
+				if tt.status != 0 {
+					w.WriteHeader(tt.status)
+					return
+				}
+				_, _ = w.Write([]byte(tt.response))
+			})
+
+			progress, err := oc.restoreRecoveryStatus(tt.indices)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, progress)
 		})
+	}
+}
 
-		progress, err := oc.restoreRecoveryStatus(nil)
-
-		require.NoError(t, err)
-		assert.Equal(t, restoreDone, progress)
+func TestRestorableIndices(t *testing.T) {
+	got := restorableIndices([]string{
+		"books", ".opendistro_security", ".kibana_1", ".plugins-ml-config",
+		"security-auditlog-2026.11.05", "top_queries-2026.11.05-89255", "logs-2026",
 	})
 
-	t.Run("not started: indices missing from the response", func(t *testing.T) {
-		oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{}`))
-		})
+	assert.Equal(t, []string{"books", "logs-2026"}, got)
+}
 
-		progress, err := oc.restoreRecoveryStatus([]string{"idx-a"})
-
-		require.NoError(t, err)
-		assert.Equal(t, restoreNotStarted, progress)
+func TestOpenSearchClientRegisterRepository(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.WriteHeader(http.StatusOK)
 	})
 
-	t.Run("not started: 404", func(t *testing.T) {
-		oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-		})
+	err := oc.registerRepository("s3-from-src", "s3", map[string]string{"bucket": "b", "readonly": "true"})
 
-		progress, err := oc.restoreRecoveryStatus([]string{"idx-a"})
-
-		require.NoError(t, err)
-		assert.Equal(t, restoreNotStarted, progress)
-	})
-
-	t.Run("running: shard not done yet", func(t *testing.T) {
-		oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"idx-a":{"shards":[{"type":"SNAPSHOT","stage":"INDEX"}]}}`))
-		})
-
-		progress, err := oc.restoreRecoveryStatus([]string{"idx-a"})
-
-		require.NoError(t, err)
-		assert.Equal(t, restoreRunning, progress)
-	})
-
-	t.Run("running: some indices still missing", func(t *testing.T) {
-		oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"idx-a":{"shards":[{"type":"SNAPSHOT","stage":"DONE"}]}}`))
-		})
-
-		progress, err := oc.restoreRecoveryStatus([]string{"idx-a", "idx-b"})
-
-		require.NoError(t, err)
-		assert.Equal(t, restoreRunning, progress)
-	})
-
-	t.Run("done: all indices, all shards DONE from SNAPSHOT", func(t *testing.T) {
-		oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"idx-a":{"shards":[{"type":"SNAPSHOT","stage":"DONE"}]},"idx-b":{"shards":[{"type":"SNAPSHOT","stage":"DONE"}]}}`))
-		})
-
-		progress, err := oc.restoreRecoveryStatus([]string{"idx-a", "idx-b"})
-
-		require.NoError(t, err)
-		assert.Equal(t, restoreDone, progress)
-	})
-
-	t.Run("not from our restore: shard type is not SNAPSHOT", func(t *testing.T) {
-		oc, _ := testOpenSearchServer(t, func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"idx-a":{"shards":[{"type":"PEER","stage":"DONE"}]}}`))
-		})
-
-		progress, err := oc.restoreRecoveryStatus([]string{"idx-a"})
-
-		require.NoError(t, err)
-		assert.Equal(t, restoreRunning, progress)
-	})
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodPut, gotMethod)
+	assert.Equal(t, "/_snapshot/s3-from-src", gotPath)
+	assert.Equal(t, "s3", gotBody["type"])
+	assert.Equal(t, map[string]any{"bucket": "b", "readonly": "true"}, gotBody["settings"])
 }
 
 func TestOpenSearchClientUnexpectedStatus(t *testing.T) {

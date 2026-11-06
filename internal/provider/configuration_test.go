@@ -22,32 +22,27 @@ func engineWithConfiguration(t *testing.T, configuration string) corev1alpha1.Co
 
 func TestResolveAdditionalConfig(t *testing.T) {
 	t.Run("no parameters set", func(t *testing.T) {
-		c, _ := newTestContext(t, testInstance(validEngine()))
-
-		got, err := resolveAdditionalConfig(c, validEngine())
+		got, err := resolveAdditionalConfig(validEngine())
 
 		require.NoError(t, err)
 		assert.Nil(t, got)
 	})
 
 	t.Run("flattens nested keys", func(t *testing.T) {
-		engine := engineWithConfiguration(t, "cluster:\n  routing:\n    allocation:\n      disk:\n        threshold_enabled: false\nhttp:\n  port: 9201\n")
-		c, _ := newTestContext(t, testInstance(engine))
-
-		got, err := resolveAdditionalConfig(c, engine)
+		engine := engineWithConfiguration(t, "cluster:\n  routing:\n    allocation:\n      disk:\n        threshold_enabled: false\nindices:\n  query:\n    bool:\n      max_clause_count: 10000000\n")
+		got, err := resolveAdditionalConfig(engine)
 
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{
 			"cluster.routing.allocation.disk.threshold_enabled": "false",
-			"http.port": "9201",
+			// Large integers must not turn into 1e+07.
+			"indices.query.bool.max_clause_count": "10000000",
 		}, got)
 	})
 
 	t.Run("accepts already-flat dotted keys", func(t *testing.T) {
 		engine := engineWithConfiguration(t, "cluster.routing.allocation.disk.threshold_enabled: false\n")
-		c, _ := newTestContext(t, testInstance(engine))
-
-		got, err := resolveAdditionalConfig(c, engine)
+		got, err := resolveAdditionalConfig(engine)
 
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"cluster.routing.allocation.disk.threshold_enabled": "false"}, got)
@@ -55,36 +50,47 @@ func TestResolveAdditionalConfig(t *testing.T) {
 
 	t.Run("invalid YAML", func(t *testing.T) {
 		engine := engineWithConfiguration(t, "cluster: [this is not: valid")
-		c, _ := newTestContext(t, testInstance(engine))
-
-		_, err := resolveAdditionalConfig(c, engine)
+		_, err := resolveAdditionalConfig(engine)
 
 		assert.ErrorContains(t, err, "not valid YAML")
 	})
 
 	t.Run("list values are rejected", func(t *testing.T) {
 		engine := engineWithConfiguration(t, "network.host:\n  - _local_\n  - _site_\n")
-		c, _ := newTestContext(t, testInstance(engine))
-
-		_, err := resolveAdditionalConfig(c, engine)
+		_, err := resolveAdditionalConfig(engine)
 
 		assert.ErrorContains(t, err, "list values are not supported")
 	})
 
 	t.Run("blocks security plugin keys", func(t *testing.T) {
 		engine := engineWithConfiguration(t, "plugins.security.ssl.http.enabled: false\n")
-		c, _ := newTestContext(t, testInstance(engine))
-
-		_, err := resolveAdditionalConfig(c, engine)
+		_, err := resolveAdditionalConfig(engine)
 
 		assert.ErrorContains(t, err, `"plugins.security.ssl.http.enabled" is managed by the provider`)
 	})
 
+	for _, key := range []string{"cluster.name", "node.roles", "network.host", "http.port", "transport.port", "path.data"} {
+		t.Run("blocks "+key, func(t *testing.T) {
+			engine := engineWithConfiguration(t, key+": x\n")
+
+			_, err := resolveAdditionalConfig(engine)
+
+			assert.ErrorContains(t, err, `"`+key+`" is managed by the provider`)
+		})
+	}
+
+	t.Run("allows keys that only share a prefix with an owned key", func(t *testing.T) {
+		engine := engineWithConfiguration(t, "cluster.routing.allocation.enable: all\nnodes_extra: x\n")
+
+		got, err := resolveAdditionalConfig(engine)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+	})
+
 	t.Run("blocks nested discovery keys", func(t *testing.T) {
 		engine := engineWithConfiguration(t, "discovery:\n  type: single-node\n")
-		c, _ := newTestContext(t, testInstance(engine))
-
-		_, err := resolveAdditionalConfig(c, engine)
+		_, err := resolveAdditionalConfig(engine)
 
 		assert.ErrorContains(t, err, `"discovery.type" is managed by the provider`)
 	})

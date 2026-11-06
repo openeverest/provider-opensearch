@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -263,67 +264,101 @@ func (oc *openSearchClient) restoreSnapshot(repo, name string, indices []string)
 	}, nil)
 }
 
+// registerRepository creates or updates a snapshot repository
+// (PUT _snapshot/<name>). Used for the read-only repositories that expose
+// another Instance's snapshots; the Instance's own repositories are managed by
+// the operator from spec.general.snapshotRepositories.
+func (oc *openSearchClient) registerRepository(name, repoType string, settings map[string]string) error {
+	return oc.do(http.MethodPut, "/_snapshot/"+name, map[string]any{
+		"type":     repoType,
+		"settings": settings,
+	}, nil)
+}
+
 // restoreProgress classifies how far a snapshot restore of a set of indices
 // has progressed.
 type restoreProgress int
 
 const (
-	// restoreNotStarted means none of the target indices have begun
-	// restoring (they are closed, or do not exist yet).
-	restoreNotStarted restoreProgress = iota
-	// restoreRunning means at least one target index is mid-restore.
-	restoreRunning
-	// restoreDone means every target index finished restoring from a
-	// snapshot and is open again.
+	// restoreRunning means at least one target index is not restored yet.
+	restoreRunning restoreProgress = iota
+	// restoreDone means every primary shard of every target index is
+	// recovered: from the snapshot, or from local disk after a node restart
+	// that followed the restore.
 	restoreDone
 )
 
 type recoveryShard struct {
-	Type  string `json:"type"`
-	Stage string `json:"stage"`
+	Type    string `json:"type"`
+	Stage   string `json:"stage"`
+	Primary bool   `json:"primary"`
 }
 
 type recoveryIndex struct {
 	Shards []recoveryShard `json:"shards"`
 }
 
-// restoreRecoveryStatus reports restore progress for the given indices using
-// the shard recovery API. A closed or not-yet-created index has no entry in
-// the response at all, which is how restoreNotStarted is detected; OpenSearch
-// reopens an index automatically once its restore finishes.
+// restoreRecoveryStatus reports the progress of a restore that was already
+// started, using the shard recovery API. Only primaries are looked at:
+// replicas of a restored index always recover from a peer. An index missing
+// from the response is closed or not created yet, so still restoring.
 func (oc *openSearchClient) restoreRecoveryStatus(indices []string) (restoreProgress, error) {
 	if len(indices) == 0 {
 		return restoreDone, nil
 	}
 
 	var resp map[string]recoveryIndex
-	path := fmt.Sprintf("/%s/_recovery?expand_wildcards=all", strings.Join(indices, ","))
+	path := fmt.Sprintf("/%s/_recovery?expand_wildcards=all&ignore_unavailable=true", strings.Join(indices, ","))
 	if err := oc.do(http.MethodGet, path, nil, &resp); err != nil {
 		if isNotFound(err) {
-			return restoreNotStarted, nil
+			return restoreRunning, nil
 		}
-		return restoreNotStarted, err
+		return restoreRunning, err
 	}
 
-	found := 0
 	for _, name := range indices {
 		entry, ok := resp[name]
 		if !ok {
-			continue
+			return restoreRunning, nil
 		}
-		found++
+		primaries := 0
 		for _, shard := range entry.Shards {
-			if shard.Type != "SNAPSHOT" || shard.Stage != "DONE" {
+			if !shard.Primary {
+				continue
+			}
+			primaries++
+			if shard.Stage != "DONE" {
 				return restoreRunning, nil
 			}
 		}
+		if primaries == 0 {
+			return restoreRunning, nil
+		}
 	}
-	switch {
-	case found == 0:
-		return restoreNotStarted, nil
-	case found < len(indices):
-		return restoreRunning, nil
-	default:
-		return restoreDone, nil
+	return restoreDone, nil
+}
+
+// restorableIndices returns the snapshot's indices a restore brings back:
+// user data only. System indices (a leading dot, e.g. .opendistro_security)
+// and the indices plugins write on their own are left alone, so the restored
+// cluster keeps its own users, roles and plugin state; the security plugin
+// rejects restoring its index for a non-certificate admin anyway.
+func restorableIndices(indices []string) []string {
+	out := make([]string, 0, len(indices))
+	for _, name := range indices {
+		if strings.HasPrefix(name, ".") || slices.ContainsFunc(pluginIndexPrefixes, func(p string) bool {
+			return strings.HasPrefix(name, p)
+		}) {
+			continue
+		}
+		out = append(out, name)
 	}
+	return out
+}
+
+// pluginIndexPrefixes are indices OpenSearch plugins create in every cluster
+// (audit log, query insights).
+var pluginIndexPrefixes = []string{
+	"security-auditlog-",
+	"top_queries-",
 }

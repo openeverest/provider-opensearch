@@ -1,138 +1,117 @@
 package provider
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	corev1 "k8s.io/api/core/v1"
+	"github.com/stretchr/testify/require"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-
-	"github.com/openeverest/provider-opensearch/internal/common"
+	"github.com/openeverest/openeverest/v2/provider-runtime/controller/validationtest"
 )
 
+// TestValidate runs the checks the runtime runs at admission and before every
+// Sync: the schemas, supportedFields and catalog this provider publishes, then
+// Validate.
 func TestValidate(t *testing.T) {
+	t.Parallel()
+	v := validationtest.New(t, New(), "../../charts/provider-opensearch/generated/provider-spec.yaml")
+
 	tests := []struct {
-		name    string
-		mutate  func(in *corev1alpha1.Instance)
-		wantErr string
+		fixture string
+		// old is the previous Instance on an update; empty for a create.
+		old string
+		// want lists the field paths of the expected errors.
+		want []string
 	}{
-		{name: "valid", mutate: func(*corev1alpha1.Instance) {}},
-		{
-			name:    "name too long",
-			mutate:  func(in *corev1alpha1.Instance) { in.Name = strings.Repeat("a", maxInstanceNameLength+1) },
-			wantErr: "at most",
-		},
-		{
-			name:    "name starts with a digit",
-			mutate:  func(in *corev1alpha1.Instance) { in.Name = "1search" },
-			wantErr: "invalid",
-		},
-		{
-			name:    "unknown topology",
-			mutate:  func(in *corev1alpha1.Instance) { in.Spec.Topology = &corev1alpha1.TopologySpec{Type: "sharded"} },
-			wantErr: "unsupported topology",
-		},
-		{
-			name: "standard topology",
-			mutate: func(in *corev1alpha1.Instance) {
-				in.Spec.Topology = &corev1alpha1.TopologySpec{Type: "standard"}
-			},
-		},
-		{
-			name: "unknown component",
-			mutate: func(in *corev1alpha1.Instance) {
-				in.Spec.Components["proxy"] = corev1alpha1.ComponentSpec{}
-			},
-			wantErr: "unsupported component",
-		},
-		{
-			name:    "missing engine",
-			mutate:  func(in *corev1alpha1.Instance) { delete(in.Spec.Components, "engine") },
-			wantErr: "is required",
-		},
-		{
-			name: "zero replicas",
-			mutate: func(in *corev1alpha1.Instance) {
-				e := in.Spec.Components["engine"]
-				e.Replicas = ptr.To[int32](0)
-				in.Spec.Components["engine"] = e
-			},
-			wantErr: "replicas",
-		},
-		{
-			name: "missing storage",
-			mutate: func(in *corev1alpha1.Instance) {
-				e := in.Spec.Components["engine"]
-				e.Storage = nil
-				in.Spec.Components["engine"] = e
-			},
-			wantErr: "storage size is required",
-		},
-		{
-			name: "storage too small",
-			mutate: func(in *corev1alpha1.Instance) {
-				e := in.Spec.Components["engine"]
-				e.Storage.Size = resource.MustParse("512Mi")
-				in.Spec.Components["engine"] = e
-			},
-			wantErr: "at least 1Gi",
-		},
-		{
-			name: "memory too small",
-			mutate: func(in *corev1alpha1.Instance) {
-				e := in.Spec.Components["engine"]
-				e.Resources.Limits[corev1.ResourceMemory] = resource.MustParse("1Gi")
-				in.Spec.Components["engine"] = e
-			},
-			wantErr: "memory",
-		},
-		{
-			name: "cpu too small",
-			mutate: func(in *corev1alpha1.Instance) {
-				e := in.Spec.Components["engine"]
-				e.Resources.Limits[corev1.ResourceCPU] = resource.MustParse("100m")
-				in.Spec.Components["engine"] = e
-			},
-			wantErr: "cpu",
-		},
-		{
-			name: "blocked configuration key",
-			mutate: func(in *corev1alpha1.Instance) {
-				e := in.Spec.Components["engine"]
-				raw, err := json.Marshal(map[string]string{"configuration": "discovery.type: single-node\n"})
-				if err != nil {
-					panic(err)
-				}
-				e.Parameters = &runtime.RawExtension{Raw: raw}
-				in.Spec.Components["engine"] = e
-			},
-			wantErr: "is managed by the provider",
-		},
+		{fixture: "minimal.yaml"},
+		{fixture: "configuration.yaml"},
+		{fixture: "load-balancer.yaml"},
+		{fixture: "dashboards.yaml"},
+		{fixture: "dashboards-older-bundle.yaml"},
+		{fixture: "name-too-long.yaml", want: []string{"metadata.name"}},
+		{fixture: "name-starts-with-digit.yaml", want: []string{"metadata.name"}},
+		{fixture: "storage-too-small.yaml", want: []string{"spec.components[engine].storage.size"}},
+		{fixture: "cpu-too-small.yaml", want: []string{"spec.components[engine].resources.requests.cpu"}},
+		{fixture: "memory-too-small.yaml", want: []string{"spec.components[engine].resources.requests.memory"}},
+		{fixture: "forbidden-configuration.yaml", want: []string{"spec.components[engine].parameters.configuration"}},
+		{fixture: "external-name-service.yaml", want: []string{"spec.components[engine].service.serviceType"}},
+		{fixture: "dashboards-version-mismatch.yaml", want: []string{"spec.components[dashboards].version"}},
+		{fixture: "unknown-component.yaml", want: []string{"spec.components[monitoring]"}},
+		{fixture: "invalid-schedule-name.yaml", want: []string{"spec.backup.storages[0].schedules[0].name"}},
+
+		// Transitions, only checked on an update at admission.
+		{fixture: "version-3.8.0.yaml", old: "version-3.7.0.yaml"},
+		{fixture: "version-3.7.0.yaml", old: "version-3.8.0.yaml", want: []string{"spec.version"}},
+		// spec.version unset: the bundle frozen in status.version is in force.
+		{fixture: "version-3.7.0.yaml", old: "status-3.8.0.yaml", want: []string{"spec.version"}},
+		{fixture: "storage-20gi.yaml", old: "minimal.yaml"},
+		{fixture: "minimal.yaml", old: "storage-20gi.yaml", want: []string{"spec.components[engine].storage.size"}},
+		{fixture: "storage-class-slow.yaml", old: "storage-class-fast.yaml", want: []string{"spec.components[engine].storage.storageClass"}},
+		{fixture: "storage-class-fast.yaml", old: "minimal.yaml", want: []string{"spec.components[engine].storage.storageClass"}},
+	}
+
+	for _, tt := range tests {
+		name := tt.fixture
+		if tt.old != "" {
+			name = tt.old + " -> " + tt.fixture
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			in := validationtest.Load(t, "testdata/validate/"+tt.fixture)
+			var old *corev1alpha1.Instance
+			if tt.old != "" {
+				old = validationtest.Load(t, "testdata/validate/"+tt.old)
+			}
+
+			res := v.Run(in, old)
+
+			var got []string
+			for _, err := range res.Errors {
+				got = append(got, err.Field)
+			}
+			assert.Equal(t, tt.want, got, "errors: %v", res.Errors)
+		})
+	}
+}
+
+func TestValidateVersionChange(t *testing.T) {
+	tests := []struct {
+		name      string
+		from, to  string
+		wantError string
+	}{
+		{name: "same version", from: "3.8.0", to: "3.8.0"},
+		{name: "minor upgrade", from: "3.7.0", to: "3.8.0"},
+		{name: "patch upgrade", from: "3.8.0", to: "3.8.1"},
+		{name: "next major", from: "3.8.0", to: "4.0.0"},
+		{name: "minor downgrade", from: "3.8.0", to: "3.7.0", wantError: "cannot be downgraded from 3.8.0 to 3.7.0; choose 3.8.0 or later"},
+		{name: "patch downgrade", from: "3.8.1", to: "3.8.0", wantError: "cannot be downgraded"},
+		{name: "major downgrade", from: "3.8.0", to: "2.19.2", wantError: "cannot be downgraded"},
+		{name: "major jump", from: "2.19.2", to: "4.0.0", wantError: "upgrade to a 3.x release first"},
+		{name: "cluster not started yet", from: "", to: "3.7.0"},
+		{name: "unparsable running version", from: "garbage", to: "3.7.0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			in := testInstance(validEngine())
-			tt.mutate(in)
-			c, _ := newTestContext(t, in)
+			errs := validateVersionChange(tt.from, tt.to)
 
-			err := New().Validate(c)
-
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
+			if tt.wantError == "" {
+				assert.Empty(t, errs)
 				return
 			}
-			assert.ErrorContains(t, err, tt.wantErr)
+			require.Len(t, errs, 1)
+			assert.Equal(t, "spec.version", errs[0].Field)
+			assert.Contains(t, errs[0].Detail, tt.wantError)
 		})
 	}
 }
@@ -151,95 +130,15 @@ func existingCluster(runningVersion string, storageClass *string) *opensearchv1.
 	}
 }
 
-func TestValidateInvalidVersion(t *testing.T) {
-	engine := validEngine()
-	engine.Version = "not-a-version"
-	c, _ := newTestContext(t, testInstance(engine))
-
-	assert.ErrorContains(t, New().Validate(c), "not a valid semantic version")
+func fieldsOf(errs field.ErrorList) []string {
+	var out []string
+	for _, e := range errs {
+		out = append(out, e.Field)
+	}
+	return out
 }
 
-func TestValidateVersionChange(t *testing.T) {
-	tests := []struct {
-		name      string
-		running   string
-		requested string
-		wantErr   string
-	}{
-		{name: "same version", running: "3.8.0", requested: "3.8.0"},
-		{name: "minor upgrade", running: "3.7.0", requested: "3.8.0"},
-		{name: "patch upgrade", running: "3.8.0", requested: "3.8.1"},
-		{name: "next major", running: "3.8.0", requested: "4.0.0"},
-		{name: "minor downgrade", running: "3.8.0", requested: "3.7.0", wantErr: "cannot be downgraded"},
-		{name: "patch downgrade", running: "3.8.1", requested: "3.8.0", wantErr: "cannot be downgraded"},
-		{name: "major downgrade", running: "3.8.0", requested: "2.19.2", wantErr: "cannot be downgraded"},
-		{name: "major jump", running: "2.19.2", requested: "4.0.0", wantErr: "skips a major version"},
-		{name: "cluster not started yet", running: "", requested: "3.7.0"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			engine := validEngine()
-			engine.Version = tt.requested
-			c, _ := newTestContext(t, testInstance(engine), existingCluster(tt.running, nil))
-
-			err := New().Validate(c)
-
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-				return
-			}
-			assert.ErrorContains(t, err, tt.wantErr)
-		})
-	}
-
-	t.Run("default version is compared when none is set", func(t *testing.T) {
-		// The provider default is 3.8.0, so a running 3.9.0 makes it a downgrade.
-		c, _ := newTestContext(t, testInstance(validEngine()), existingCluster("3.9.0", nil))
-
-		assert.ErrorContains(t, New().Validate(c), "cannot be downgraded")
-	})
-
-	t.Run("error tells the user what is allowed", func(t *testing.T) {
-		engine := validEngine()
-		engine.Version = "3.7.0"
-		c, _ := newTestContext(t, testInstance(engine), existingCluster("3.8.0", nil))
-
-		assert.ErrorContains(t, New().Validate(c), "choose 3.8.0 or later")
-	})
-}
-
-func TestValidateStorageClassChange(t *testing.T) {
-	tests := []struct {
-		name      string
-		existing  *string
-		requested *string
-		wantErr   string
-	}{
-		{name: "unchanged", existing: ptr.To("fast"), requested: ptr.To("fast")},
-		{name: "both default", existing: nil, requested: nil},
-		{name: "changed", existing: ptr.To("fast"), requested: ptr.To("slow"), wantErr: "storage class cannot be changed"},
-		{name: "default to explicit", existing: nil, requested: ptr.To("fast"), wantErr: "storage class cannot be changed"},
-		{name: "explicit to default", existing: ptr.To("fast"), requested: nil, wantErr: "storage class cannot be changed"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			engine := validEngine()
-			engine.Storage.StorageClass = tt.requested
-			c, _ := newTestContext(t, testInstance(engine), existingCluster("3.8.0", tt.existing))
-
-			err := New().Validate(c)
-
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-				return
-			}
-			assert.ErrorContains(t, err, tt.wantErr)
-			assert.ErrorContains(t, err, "keep")
-		})
-	}
-}
-
-func TestValidateStorageExpansion(t *testing.T) {
+func TestValidateReferencesAgainstRunningCluster(t *testing.T) {
 	storageClass := func(name string, allowExpansion *bool, isDefault bool) *storagev1.StorageClass {
 		sc := &storagev1.StorageClass{
 			ObjectMeta:           metav1.ObjectMeta{Name: name},
@@ -252,136 +151,108 @@ func TestValidateStorageExpansion(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		requestedSize string
-		storageClass  *string
-		objs          []client.Object
-		wantErr       string
+		name             string
+		runningVersion   string
+		requestedVersion string
+		requestedSize    string
+		existingClass    *string
+		requestedClass   *string
+		objs             []client.Object
+		want             []string
 	}{
+		{name: "no change", requestedSize: "10Gi", existingClass: ptr.To("fast"), requestedClass: ptr.To("fast")},
 		{
 			name:          "expansion allowed",
-			requestedSize: "20Gi",
-			storageClass:  ptr.To("fast"),
-			objs:          []client.Object{storageClass("fast", ptr.To(true), false)},
+			requestedSize: "20Gi", existingClass: ptr.To("fast"), requestedClass: ptr.To("fast"),
+			objs: []client.Object{storageClass("fast", ptr.To(true), false)},
 		},
 		{
 			name:          "expansion not allowed",
-			requestedSize: "20Gi",
-			storageClass:  ptr.To("fast"),
-			objs:          []client.Object{storageClass("fast", ptr.To(false), false)},
-			wantErr:       "does not allow volume expansion",
+			requestedSize: "20Gi", existingClass: ptr.To("fast"), requestedClass: ptr.To("fast"),
+			objs: []client.Object{storageClass("fast", ptr.To(false), false)},
+			want: []string{"spec.components[engine].storage.size"},
 		},
 		{
 			name:          "AllowVolumeExpansion unset defaults to false",
-			requestedSize: "20Gi",
-			storageClass:  ptr.To("fast"),
-			objs:          []client.Object{storageClass("fast", nil, false)},
-			wantErr:       "does not allow volume expansion",
+			requestedSize: "20Gi", existingClass: ptr.To("fast"), requestedClass: ptr.To("fast"),
+			objs: []client.Object{storageClass("fast", nil, false)},
+			want: []string{"spec.components[engine].storage.size"},
 		},
 		{
 			name:          "storage class not found",
-			requestedSize: "20Gi",
-			storageClass:  ptr.To("ghost"),
-			wantErr:       "not found",
-		},
-		{
-			name:          "same size does not trigger the check",
-			requestedSize: "10Gi",
-			storageClass:  ptr.To("fast"),
-			objs:          []client.Object{storageClass("fast", ptr.To(false), false)},
+			requestedSize: "20Gi", existingClass: ptr.To("ghost"), requestedClass: ptr.To("ghost"),
+			want: []string{"spec.components[engine].storage.storageClass"},
 		},
 		{
 			name:          "default storage class allows expansion",
 			requestedSize: "20Gi",
-			storageClass:  nil,
 			objs:          []client.Object{storageClass("standard", ptr.To(true), true)},
 		},
 		{
 			name:          "default storage class disallows expansion",
 			requestedSize: "20Gi",
-			storageClass:  nil,
 			objs:          []client.Object{storageClass("standard", ptr.To(false), true)},
-			wantErr:       "does not allow volume expansion",
+			want:          []string{"spec.components[engine].storage.size"},
+		},
+		{name: "no default storage class resolvable does not block", requestedSize: "20Gi"},
+		{
+			name:          "shrink",
+			requestedSize: "5Gi",
+			want:          []string{"spec.components[engine].storage.size"},
 		},
 		{
-			name:          "no default storage class resolvable does not block",
-			requestedSize: "20Gi",
-			storageClass:  nil,
+			name:          "storage class changed",
+			requestedSize: "10Gi", existingClass: ptr.To("fast"), requestedClass: ptr.To("slow"),
+			want: []string{"spec.components[engine].storage.storageClass"},
+		},
+		{
+			name:           "older than the running version",
+			runningVersion: "3.8.0", requestedVersion: "3.7.0", requestedSize: "10Gi",
+			want: []string{"spec.version"},
+		},
+		{
+			name:           "newer than the running version",
+			runningVersion: "3.7.0", requestedVersion: "3.8.0", requestedSize: "10Gi",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			engine := validEngine()
+			engine.Version = tt.requestedVersion
 			engine.Storage.Size = resource.MustParse(tt.requestedSize)
-			engine.Storage.StorageClass = tt.storageClass
-			objs := append([]client.Object{existingCluster("3.8.0", tt.storageClass)}, tt.objs...)
+			engine.Storage.StorageClass = tt.requestedClass
+			objs := append([]client.Object{existingCluster(tt.runningVersion, tt.existingClass)}, tt.objs...)
 			c, _ := newTestContext(t, testInstance(engine), objs...)
 
-			err := New().Validate(c)
+			errs, err := New().ValidateReferences(c)
 
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-				return
-			}
-			assert.ErrorContains(t, err, tt.wantErr)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, fieldsOf(errs), "errors: %v", errs)
 		})
 	}
+
+	t.Run("no cluster yet", func(t *testing.T) {
+		c, _ := newTestContext(t, testInstance(validEngine()))
+
+		errs, err := New().ValidateReferences(c)
+
+		require.NoError(t, err)
+		assert.Empty(t, errs)
+	})
 }
 
-func TestValidateDashboards(t *testing.T) {
-	tests := []struct {
-		name       string
-		dashboards corev1alpha1.ComponentSpec
-		wantErr    string
-	}{
-		{name: "empty is valid"},
-		{name: "valid replicas", dashboards: corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](2)}},
-		{
-			name:       "zero replicas",
-			dashboards: corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](0)},
-			wantErr:    "replicas",
-		},
-		{
-			name:       "storage is rejected",
-			dashboards: corev1alpha1.ComponentSpec{Storage: &corev1alpha1.Storage{Size: resource.MustParse("1Gi")}},
-			wantErr:    "storage is not supported",
-		},
-		{
-			name:       "invalid version",
-			dashboards: corev1alpha1.ComponentSpec{Version: "not-a-version"},
-			wantErr:    "not a valid semantic version",
-		},
-		{
-			name:       "unsupported service type",
-			dashboards: corev1alpha1.ComponentSpec{Service: &corev1alpha1.Service{ServiceType: corev1.ServiceTypeExternalName}},
-			wantErr:    "unsupported service type",
-		},
+func TestValidateReferencesBackupStorage(t *testing.T) {
+	entry := func(name string) corev1alpha1.InstanceBackupStorage {
+		return corev1alpha1.InstanceBackupStorage{StorageRef: commonv1alpha1.ObjectRef{Name: name}}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			in := testInstance(validEngine())
-			in.Spec.Components[common.ComponentDashboards] = tt.dashboards
-			c, _ := newTestContext(t, in)
+	notS3 := testBackupStorage("azure", nil)
+	notS3.Spec.Type = "azure"
+	in := instanceWithBackup(entry("s3"), entry("azure"), entry("missing"))
+	c, _ := newTestContext(t, in, testBackupStorage("s3", validS3Spec()), notS3)
 
-			err := New().Validate(c)
+	errs, err := New().ValidateReferences(c)
 
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-				return
-			}
-			assert.ErrorContains(t, err, tt.wantErr)
-		})
-	}
-}
-
-func TestValidateStorageShrink(t *testing.T) {
-	existing := &opensearchv1.OpenSearchCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace},
-		Spec: opensearchv1.ClusterSpec{NodePools: []opensearchv1.NodePool{
-			{Component: nodePoolName, DiskSize: resource.MustParse("20Gi")},
-		}},
-	}
-	c, _ := newTestContext(t, testInstance(validEngine()), existing)
-
-	assert.ErrorContains(t, New().Validate(c), "cannot be decreased")
+	require.NoError(t, err)
+	// A missing storage is reported by the runtime, not here.
+	assert.Equal(t, []string{"spec.backup.storages[1].storageRef.name"}, fieldsOf(errs))
 }
