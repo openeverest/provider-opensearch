@@ -132,7 +132,7 @@ UI or API, connect to it, scale it, and delete it.
 - [x] `engine.replicas >= 1`
 - [x] Minimum resources (memory `>= 2Gi`, CPU `>= 500m`) and storage (`>= 1Gi`) — revisit after load testing
 - [x] Reject storage shrink
-- [ ] Reject version downgrade (the operator webhook does this, but it is disabled without cert-manager)
+- [x] Reject version downgrade, major-version jumps, storage class changes and unsafe configuration keys — at admission (the provider's own Instance webhook, no cert-manager needed) and again against the running cluster in `ValidateReferences`
 
 **Cleanup**
 - [x] Delete the `OpenSearchCluster`, wait until it is gone, then delete the operator secrets that have no owner reference (`<name>-admin-password`, `<name>-dashboards-password`)
@@ -140,13 +140,11 @@ UI or API, connect to it, scale it, and delete it.
 **Quality**
 - [x] Unit tests: spec mapping, resources defaulting, status mapping, validation, provider-runtime conformance
 - [x] Chainsaw integration suite `core`: create → assert CR shape → ready → scale → delete (operator disabled, CR asserted)
-- [x] Chainsaw `e2e-cluster` suite with the real operator on k3d (`deploy-provider-e2e`): Instance reaches
-  `Ready` against a genuinely running OpenSearchCluster (no status faking, unlike `core`), and the published
-  `<name>-conn` Secret is used to actually curl `_cluster/health` from inside the cluster. Verified manually
-  end to end (provider + real operator deployed, Instance created, reached `Ready` in ~6 min, connection
-  curl returned `status: green`, delete cascaded and removed the admin secret) — this also showed the suite
-  needs only the provider itself, not the separate OpenEverest controller-manager CI otherwise deploys for
-  every suite; left that step in CI unchanged since removing it is out of scope here
+- [x] Chainsaw `e2e-cluster/core` with the real operator (`deploy-provider-e2e`): Instance reaches `Ready`
+  against a running OpenSearchCluster, the published `<name>-conn` details answer `_cluster/health` with TLS
+  verified against `<name>-ca`, scales 1 → 3 nodes, and deletion removes the cluster, its secrets and PVCs
+- [x] Chainsaw integration suite `features`: configuration, external access, Dashboards on/off, upgrade,
+  and the updates admission rejects
 - [x] README capabilities table + compatibility table filled in; `examples/instance-simple.yaml`
 
 ### Capabilities at MVP
@@ -206,12 +204,12 @@ the provider drives snapshots itself through the OpenSearch REST API.
 - [x] Authenticated REST client in the provider (admin credentials + operator-generated CA) — shared helper (`opensearch_client.go`), used by backup today, ready for restore and status
 - [x] **On-demand backup** — `SyncBackup`: `PUT _snapshot/<repo>/<backup-name>`, poll `GET _snapshot/<repo>/<name>` → `BackupExecutionStatus` (state, start/end, size)
 - [x] **Backup deletion** — `CleanupBackup`: `DELETE _snapshot/<repo>/<name>` when `deletionPolicy: Delete`
-- [x] **Scheduled backups** — `storages[].schedules[]` → one `OpensearchSnapshotPolicy` CR per enabled schedule (cron, `deleteCondition.maxCount = retentionCopies`, deletion runs on the same cron as creation since a deletion condition with no schedule of its own never fires); stale policies for removed/disabled schedules are deleted
-- [x] **Mirror scheduled snapshots** into `Backup` CRs — resolved: `BackupMirror` does not fit (it watches a single operator-native CR; snapshots are not Kubernetes objects). Instead, `Sync` polls `GET _snapshot/<repo>/_all` each reconcile and creates a `Backup` CR (named after the snapshot, so creating it twice is a no-op) for any `SUCCESS` snapshot whose name matches `<instance>-<schedule>-`. Not owned by the Instance via a Kubernetes ownerReference — `Backup.spec.origin.instanceRef` plus `InstanceDeletionPolicy` already govern that relationship
-- [x] **Restore in place** — `SyncRestore`: close target indices (`_close`), `POST _snapshot/<repo>/<name>/_restore`, track recovery via the shard recovery API (`GET /<indices>/_recovery`, all shards `type: SNAPSHOT`/`stage: DONE`) → `RestoreExecutionStatus`; Instance reports `Restoring`. Verified live end to end: wrote a doc, snapshotted, modified the doc, restored, confirmed the original value came back. Caught a real bug this way — restoring with `include_global_state: true` is rejected by the security plugin for *any* basic-auth user regardless of role (`security_exception` on `cluster:admin/snapshot/restore`, even for `all_access`); fixed by always restoring with `include_global_state: false`, which is also the safer default for an in-place restore (it would otherwise overwrite the cluster's current security config/users with their snapshot-time values)
-- [x] **New Instance from backup** — `spec.dataSource`: `Sync` calls `ReconcileDataSource()`, which creates the seeding `Restore` CR and drives it through the same `SyncRestore`
+- [x] **Scheduled backups** — `storages[].schedules[]` → one `OpensearchSnapshotPolicy` CR per enabled schedule (cron, `retention` → `deleteCondition` `maxCount`/`maxAge` with `minCount: 1`, deletion runs on the same cron as creation since a deletion condition with no schedule of its own never fires; snapshot `dateFormat` without colons so names are valid Kubernetes names); stale policies for removed/disabled schedules are deleted
+- [x] **Mirror scheduled snapshots** into `Backup` CRs — resolved: `BackupMirror` does not fit (it watches a single operator-native CR; snapshots are not Kubernetes objects). Instead, a manager Runnable polls `GET _snapshot/<repo>/_all` every minute, deletes the `Backup` CRs of snapshots retention removed, and creates a `Backup` CR (named after the snapshot, so creating it twice is a no-op) for any `SUCCESS` snapshot whose name matches `<instance>-<schedule>-`. Not owned by the Instance via a Kubernetes ownerReference — `Backup.spec.origin.instanceRef` plus `InstanceDeletionPolicy` already govern that relationship
+- [x] **Restore in place** — `SyncRestore`: close target indices (`_close`), `POST _snapshot/<repo>/<name>/_restore`, track recovery via the shard recovery API (`GET /<indices>/_recovery`, every primary `stage: DONE`; replicas recover from peers), user indices only → `RestoreExecutionStatus`; Instance reports `Restoring`. Verified live end to end: wrote a doc, snapshotted, modified the doc, restored, confirmed the original value came back. Caught a real bug this way — restoring with `include_global_state: true` is rejected by the security plugin for *any* basic-auth user regardless of role (`security_exception` on `cluster:admin/snapshot/restore`, even for `all_access`); fixed by always restoring with `include_global_state: false`, which is also the safer default for an in-place restore (it would otherwise overwrite the cluster's current security config/users with their snapshot-time values)
+- [x] **New Instance from backup** — `spec.dataSource`: `Sync` calls `ReconcileDataSource()`, which creates the seeding `Restore` CR and drives it through the same `SyncRestore`. Each Instance's repository has its own `base_path`; another Instance's snapshots are read through a read-only repository
 - [x] Dev: S3-compatible mock (`adobe/s3mock`; `quay.io/minio/minio:latest` now 401s on anonymous pulls) + `BackupStorage` manifests in `dev/resources/`
-- [ ] Chainsaw `backup` suite
+- [x] Chainsaw `integration/backup` (repositories, keystore, SM policies, retention) and `e2e-cluster/backup` (backup, in-place restore, new Instance from backup, scheduled snapshot mirrored, delete) against SeaweedFS
 
 | Capability | Status | Notes |
 |---|---|---|
@@ -236,16 +234,18 @@ For larger / production clusters: separate cluster-manager quorum from data node
 
 ## M5 — Monitoring
 
-OpenEverest `MonitoringConfig` currently supports only **PMM**, which has no native OpenSearch
-integration. The operator ships the Prometheus exporter plugin plus a `ServiceMonitor`.
+The operator ships the Prometheus exporter plugin plus a `ServiceMonitor`. A first version
+(exporter + dedicated low-privilege user, tested live) exists on the community branch but is not
+merged: it predates the OpenEverest provider monitoring contract (`MonitoringBinding`,
+`spec.monitoring.destinations`) and needs to be rebuilt on it.
 
-- [ ] Decide the integration path with OpenEverest core (new `MonitoringConfig` type vs. PMM external exporter)
+- [ ] Integrate through the OpenEverest provider monitoring contract (`definition/monitoring.yaml`)
 - [ ] Optional `monitoring` component → `general.monitoring` (exporter plugin, dedicated low-privilege monitoring user, scrape interval)
 - [ ] Air-gapped support via `pluginUrl`
 
 | Capability | Status |
 |---|---|
-| Monitoring | ✅ |
+| Monitoring | ❌ |
 
 ---
 
