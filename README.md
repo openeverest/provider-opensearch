@@ -60,9 +60,11 @@ for what is planned next.
 | Provisioning | ✅ | `standard` topology |
 | Horizontal scaling | ✅ | `spec.components.engine.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources`; the JVM heap is half the memory request |
-| Version upgrades | ❌ | |
-| Custom configuration | ❌ | |
-| Monitoring | ❌ | |
+| Version upgrades | ✅ | `spec.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
+| Custom configuration | ✅ | `spec.components.engine.parameters.configuration`; an `opensearch.yml` fragment (YAML), merged into `additionalConfig`. Keys the provider manages (security, discovery, node, network, paths, ports) are rejected |
+| External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service; the certificate covers in-cluster names only |
+| Dashboards | ✅ | Optional `dashboards` component; see [Configuration](#configuration) |
+| Monitoring | ❌ | Planned on the OpenEverest monitoring contract (#14) |
 | TLS | ✅ | Operator-generated certificates for transport and HTTP, always on |
 
 Stateful workloads additionally report:
@@ -70,10 +72,10 @@ Stateful workloads additionally report:
 | Capability | Status | Notes |
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage`; volumes are deleted with the Instance |
-| Storage expansion | ❌ | |
-| Backups (on demand) | ❌ | |
-| Backups (scheduled) | ❌ | |
-| Restore | ❌ | |
+| Storage expansion | ✅ | `spec.components.engine.storage.size`; rejected when the StorageClass does not allow expansion |
+| Backups (on demand) | ✅ | S3-compatible storage, via the OpenSearch snapshot API; see [Configuration](#configuration) |
+| Backups (scheduled) | ✅ | `spec.backup.storages[].schedules[]`; see [Configuration](#configuration) |
+| Restore | ✅ | In place, or seeding a new Instance via `spec.dataSource`; see [Configuration](#configuration) |
 
 ## Installation
 
@@ -90,7 +92,12 @@ helm install provider-opensearch \
   automatically. Set `operator.enabled=false` if the operator is already installed.
 - The operator's validating webhooks are disabled by default because they require
   cert-manager; enable `operator.webhook.enabled` and `operator.webhook.certManager.enabled`
-  together if cert-manager is available.
+  together if cert-manager is available. The provider's own Instance admission webhook
+  (installed by the chart, no cert-manager needed) rejects the same unsafe changes (version
+  downgrades, upgrades that skip a major version, storage class changes, shrinking storage)
+  without them, so enabling the operator's webhooks is defense-in-depth, not a requirement.
+  Set `admission.certManager.enabled=true` to have cert-manager issue the provider webhook's
+  certificate instead of the chart.
 
 Upgrade and uninstall:
 
@@ -167,7 +174,9 @@ operator generates per cluster (secret `<instance>-ca`).
 
 Source of truth: [definition/versions.yaml](definition/versions.yaml).
 
-Version upgrades are not exposed yet; see [ROADMAP.md](ROADMAP.md).
+Change `spec.version` on a running Instance to upgrade it; the operator performs a rolling
+upgrade and the Instance reports `Updating` until every node runs the new version. Admission
+rejects downgrades and upgrades that skip a major version.
 
 ## Configuration
 
@@ -183,7 +192,61 @@ Worth knowing:
   to the limits when only limits are set; the minimum is `2Gi`.
 - **Instance name** — at most 36 characters, since the operator derives Kubernetes object
   names from it.
-- **Storage class** — cannot be changed after creation.
+- **Storage class** — cannot be changed after creation. A size increase is rejected if the
+  class's `allowVolumeExpansion` is not `true`.
+- **Version changes** — downgrades and upgrades that skip a major version are rejected; see
+  [Versions](#versions).
+- **Custom configuration** — `spec.components.engine.parameters.configuration` takes an
+  `opensearch.yml` fragment, flattened into dotted keys (nested YAML is flattened the same
+  way, e.g. `cluster: {routing: {allocation: {disk: {threshold_enabled: false}}}}` becomes
+  `cluster.routing.allocation.disk.threshold_enabled`). List-valued keys are rejected, as are
+  the keys the provider and operator manage: `plugins.security.*` (TLS and the security
+  plugin), `discovery.*`, `cluster.name`, `cluster.initial_*`, `node.*`, `network.*`, `path.*`,
+  and the HTTP and transport ports. A change restarts the nodes one by one; the Instance is
+  `Updating` until the restart finishes.
+- **External access** — the OpenSearch operator's own service is always `ClusterIP`; it has no
+  field to change that. Setting `spec.components.engine.service.serviceType` to `LoadBalancer`
+  or `NodePort` makes the provider create and manage a second service, `<name>-exposed`,
+  pointing at the same pods, exposing only the REST API port (9200). Annotations
+  (`service.annotations`) are applied to the operator's main service regardless of type.
+  Reverting to `ClusterIP` (or unsetting `service`) removes the `<name>-exposed` service.
+  Once a `LoadBalancer` has an address, the connection secret publishes it as `host`. The
+  operator-generated HTTP certificate only covers the in-cluster names, so external clients
+  must trust `<name>-ca` and skip hostname verification, or use their own certificates
+  (tracked in #15).
+- **Dashboards** — an optional `dashboards` component deploys OpenSearch Dashboards as part of
+  the same `OpenSearchCluster`. Supported fields: `replicas`, `resources`, and `service`
+  (`serviceType`, `annotations`, `loadBalancerService.sourceRanges` — the operator supports a
+  real service type for Dashboards, unlike the main engine). TLS is always generated, and the
+  version always matches the engine's (admission rejects a different one). Removing the
+  component removes the Dashboards deployment. There is
+  no UI form field for it yet (API/CLI only), matching the only other optional-component
+  precedent in the OpenEverest ecosystem. Credentials live in the
+  `<name>-dashboards-password` secret.
+- **Backups (on demand)** — register an S3-compatible `BackupStorage` on the Instance via
+  `spec.backup.storages[]`; the provider maps it onto `general.snapshotRepositories` and
+  `general.keystore` and adds `repository-s3` to `pluginsList` (enabling backups restarts the
+  nodes once). Each Instance writes under its own path in the bucket, `<namespace>/<instance>`,
+  so Instances can share a `BackupStorage`. A `Backup` CR targeting the
+  `opensearch-snapshot` BackupClass then drives a real OpenSearch snapshot through the
+  cluster's own REST API — the operator has no backup CR of its own. Deleting the `Backup` CR
+  deletes the snapshot unless `deletionPolicy: Retain` is set.
+- **Backups (scheduled)** — add entries under `spec.backup.storages[].schedules[]`; each
+  enabled schedule becomes an `OpensearchSnapshotPolicy` (operator-native Snapshot Management).
+  `retention` becomes a deletion condition on the same cron as creation (`count` keeps that many
+  snapshots; `time` deletes older ones, a month counting as 30 days). Every minute the provider
+  lists the repository, creates a `Backup` CR for each snapshot a schedule took, and deletes the
+  `Backup` CRs of snapshots retention removed, so scheduled backups show up alongside on-demand
+  ones.
+- **Restore** — a `Restore` CR targeting a `Backup` restores the snapshot's user indices in
+  place: they are closed and overwritten (same names; no rename pattern, no empty-cluster
+  requirement). System indices (names starting with `.`, e.g. the security plugin's) and the
+  audit-log and query-insights indices are not restored, so the cluster keeps its own users,
+  roles and admin credentials. The Instance reports `Restoring` while it runs. The same path
+  seeds a new Instance: set `spec.dataSource` to a `Backup` and the runtime creates the restore
+  once the cluster is running. A backup of another Instance is read through a read-only
+  repository, which needs the backup's storage in the new Instance's `spec.backup.storages`.
+  Point-in-time recovery is not supported.
 
 ## Development
 
@@ -227,11 +290,11 @@ code generation, and the backup/restore interfaces are documented once for all p
 
 - **Unit tests** — `make test-unit`, including the provider-runtime conformance checks
   that every UI field and supported field is consumed by `Sync`.
-- **Integration tests** — chainsaw suites under `test/integration/`. The `core/` suite runs
-  without the operator and simulates it by patching the `OpenSearchCluster` status. See
-  [test/integration/README.md](test/integration/README.md).
+- **Integration tests** — chainsaw suites under `test/integration/` (operator simulated by
+  patching `OpenSearchCluster` status) and `test/e2e-cluster/` (the real OpenSearch operator).
+  See [test/README.md](test/README.md).
 - **CI** — `.github/workflows/ci.yaml` runs lint, build, unit tests, generated-file
-  verification, Helm lint, and each integration suite on every pull request.
+  verification, Helm lint, and every integration and e2e-cluster suite on every pull request.
 
 ## Troubleshooting
 

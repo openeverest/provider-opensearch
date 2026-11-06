@@ -1,0 +1,130 @@
+---
+# Backups against the real OpenSearch operator (see deploy-provider-e2e) and
+# an in-cluster S3 (test/testdata/seaweedfs.yaml): snapshots are taken and
+# restored through the cluster's REST API, so only a running cluster tests
+# them.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: e2e-cluster-backup
+spec:
+  description: |
+    An on-demand backup, an in-place restore that brings changed data back,
+    a new Instance seeded from the backup, a scheduled snapshot mirrored as a
+    Backup, and deleting a backup removing its snapshot.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instances,backups,restores -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters,opensearchsnapshotpolicies -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get pods
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 200
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=operator
+        tail: 100
+
+  steps:
+    - name: install-storage
+      try:
+        - assert:
+            file: ../core/00-assert.yaml
+        - apply:
+            file: ../../testdata/seaweedfs.yaml
+        - assert:
+            timeout: 3m
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: seaweedfs
+                namespace: seaweedfs
+              status:
+                readyReplicas: 1
+        - apply:
+            file: 00-install.yaml
+        - apply:
+            file: ../lib/toolbox.yaml
+
+    - name: create-source
+      try:
+        - apply:
+            file: 10-create-source.yaml
+        - assert:
+            file: 10-assert.yaml
+            timeout: 8m
+        - assert:
+            file: ../lib/toolbox-assert.yaml
+        - script:
+            timeout: 2m
+            content: |
+              set -e
+              ../lib/opensearch.sh source PUT /books '{"settings":{"number_of_shards":1,"number_of_replicas":0}}'
+              for id in 1 2 3; do
+                ../lib/opensearch.sh source PUT "/books/_doc/$id?refresh=true" "{\"title\":\"book $id\"}"
+              done
+
+    - name: backup
+      try:
+        - apply:
+            file: 20-backup.yaml
+        - assert:
+            file: 20-assert.yaml
+            timeout: 3m
+
+    - name: restore-in-place
+      try:
+        # Change the data after the backup: the restore must undo both.
+        - script:
+            timeout: 2m
+            content: |
+              set -e
+              ../lib/opensearch.sh source PUT '/books/_doc/99?refresh=true' '{"title":"after the backup"}'
+              ../lib/opensearch.sh source DELETE '/books/_doc/1?refresh=true'
+        - apply:
+            file: 30-restore.yaml
+        - assert:
+            file: 30-assert.yaml
+            timeout: 5m
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh source GET '/books/_search?size=10&sort=title.keyword&filter_path=hits.hits._id'
+            check:
+              (json_parse($stdout).hits.hits[*]._id): ["1", "2", "3"]
+
+    - name: new-instance-from-backup
+      try:
+        - apply:
+            file: 40-create-destination.yaml
+        - assert:
+            file: 40-assert.yaml
+            timeout: 10m
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh destination GET '/books/_search?size=10&sort=title.keyword&filter_path=hits.hits._id'
+            check:
+              (json_parse($stdout).hits.hits[*]._id): ["1", "2", "3"]
+
+    - name: scheduled-backup-is-mirrored
+      try:
+        - assert:
+            file: 50-assert.yaml
+            timeout: 5m
+
+    - name: delete-backup-removes-snapshot
+      try:
+        - delete:
+            ref:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: Backup
+              name: on-demand
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh source GET '/_cat/snapshots/seaweedfs?h=id'
+            check:
+              (contains($stdout, 'on-demand')): false

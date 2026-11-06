@@ -6,7 +6,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,6 +18,7 @@ import (
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
+	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -28,12 +31,16 @@ const (
 	testNamespace = "db"
 )
 
+// testScheme registers what the runtime registers (reconciler.New) and then
+// the provider's own Types, so a type Sync uses without registering it fails
+// here as it would in the cluster.
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
-	require.NoError(t, opensearchv1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+	require.NoError(t, New().Types()(scheme))
 	return scheme
 }
 
@@ -49,9 +56,17 @@ func testProvider() *corev1alpha1.Provider {
 						{Version: "3.8.0", Image: "opensearchproject/opensearch:3.8.0"},
 					},
 				},
+				common.ComponentTypeDashboards: {
+					DefaultVersion: "3.8.0",
+					Versions: []corev1alpha1.ComponentVersion{
+						{Version: "3.7.0", Image: "opensearchproject/opensearch-dashboards:3.7.0"},
+						{Version: "3.8.0", Image: "opensearchproject/opensearch-dashboards:3.8.0"},
+					},
+				},
 			},
 			Components: map[string]corev1alpha1.Component{
-				common.ComponentEngine: {Type: common.ComponentTypeOpensearch},
+				common.ComponentEngine:     {Type: common.ComponentTypeOpensearch},
+				common.ComponentDashboards: {Type: common.ComponentTypeDashboards},
 			},
 		},
 	}
@@ -87,6 +102,16 @@ func newTestContext(t *testing.T, in *corev1alpha1.Instance, objs ...client.Obje
 		WithScheme(testScheme(t)).
 		WithObjects(objs...).
 		WithStatusSubresource(&opensearchv1.OpenSearchCluster{}).
+		// The runtime registers these indexes on the manager's cache.
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			if ref := obj.(*backupv1alpha1.Backup).Spec.Origin.InstanceRef; ref != nil {
+				return []string{ref.Name}
+			}
+			return nil
+		}).
+		WithIndex(&backupv1alpha1.Restore{}, controller.IndexRestoreInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Restore).Spec.InstanceRef.Name}
+		}).
 		Build()
 	return controller.NewContext(context.Background(), cl, in, common.ProviderName), cl
 }
@@ -95,7 +120,7 @@ func TestBuildClusterSpec(t *testing.T) {
 	engine := validEngine()
 	engine.Storage.StorageClass = ptr.To("fast")
 
-	spec := buildClusterSpec(testName, engine, "3.8.0", "opensearchproject/opensearch:3.8.0")
+	spec := buildClusterSpec(testName, engine, "3.8.0", "opensearchproject/opensearch:3.8.0", nil, nil, nil, nil)
 
 	assert.Equal(t, "3.8.0", spec.General.Version)
 	assert.Equal(t, testName, spec.General.ServiceName)
@@ -120,11 +145,19 @@ func TestBuildClusterSpec(t *testing.T) {
 }
 
 func TestBuildClusterSpecDefaults(t *testing.T) {
-	spec := buildClusterSpec(testName, corev1alpha1.ComponentSpec{}, "3.8.0", "")
+	spec := buildClusterSpec(testName, corev1alpha1.ComponentSpec{}, "3.8.0", "", nil, nil, nil, nil)
 
 	assert.Nil(t, spec.General.ImageSpec, "an empty image lets the operator derive it from the version")
 	assert.Equal(t, defaultReplicas, spec.NodePools[0].Replicas)
 	assert.True(t, spec.NodePools[0].DiskSize.IsZero())
+}
+
+func TestBuildNodePoolAdditionalConfig(t *testing.T) {
+	config := map[string]string{"cluster.routing.allocation.disk.threshold_enabled": "false"}
+
+	pool := buildNodePool(testName, validEngine(), config)
+
+	assert.Equal(t, config, pool.AdditionalConfig)
 }
 
 func TestBuildNodePoolSchedulingPolicy(t *testing.T) {
@@ -134,12 +167,12 @@ func TestBuildNodePoolSchedulingPolicy(t *testing.T) {
 		Affinity:     affinity,
 		NodeSelector: map[string]string{"disk": "ssd"},
 		Tolerations:  []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpExists}},
-		TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+		TopologySpreadConstraints: &[]corev1.TopologySpreadConstraint{
 			{MaxSkew: 1, TopologyKey: corev1.LabelTopologyZone},
 		},
 	}
 
-	pool := buildNodePool(testName, engine)
+	pool := buildNodePool(testName, engine, nil)
 
 	assert.Same(t, affinity, pool.Affinity)
 	assert.Equal(t, map[string]string{"disk": "ssd"}, pool.NodeSelector)
@@ -192,6 +225,41 @@ func TestSync(t *testing.T) {
 		assert.Equal(t, testName, got.OwnerReferences[0].Name)
 	})
 
+	t.Run("dropping dashboards deletes what the operator leaves behind", func(t *testing.T) {
+		deployment, service, certSecret, configMap := dashboardsObjectNames(testName)
+		meta := func(name string) metav1.ObjectMeta { return metav1.ObjectMeta{Name: name, Namespace: testNamespace} }
+		leftovers := []client.Object{
+			&appsv1.Deployment{ObjectMeta: meta(deployment)},
+			&corev1.Service{ObjectMeta: meta(service)},
+			&corev1.Secret{ObjectMeta: meta(certSecret)},
+			&corev1.ConfigMap{ObjectMeta: meta(configMap)},
+		}
+		c, cl := newTestContext(t, testInstance(validEngine()), leftovers...)
+
+		require.NoError(t, New().Sync(c))
+
+		for _, obj := range leftovers {
+			err := cl.Get(context.Background(), client.ObjectKeyFromObject(obj), obj)
+			assert.True(t, apierrors.IsNotFound(err), "%T %s must be deleted", obj, obj.GetName())
+		}
+	})
+
+	t.Run("dropping dashboards disables the block it applied", func(t *testing.T) {
+		withDashboards := testInstance(validEngine())
+		withDashboards.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](1), Resources: validEngine().Resources}
+		c, cl := newTestContext(t, withDashboards)
+		require.NoError(t, New().Sync(c))
+
+		without := testInstance(validEngine())
+		require.NoError(t, New().Sync(controller.NewContext(context.Background(), cl, without, common.ProviderName)))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.False(t, got.Spec.Dashboards.Enable)
+		// The CRD rejects a dashboards block without resources.
+		assert.NotNil(t, got.Spec.Dashboards.Resources.Requests)
+	})
+
 	t.Run("falls back to the default version", func(t *testing.T) {
 		c, cl := newTestContext(t, testInstance(validEngine()))
 
@@ -214,6 +282,26 @@ func TestSync(t *testing.T) {
 		assert.Equal(t, "registry.local/opensearch:3.8.0", *got.Spec.General.Image)
 	})
 
+	t.Run("propagates a version upgrade to an existing cluster", func(t *testing.T) {
+		// Status.Version is what the operator reports once it has rolled the
+		// upgrade out; Spec.General.Version is what was last requested.
+		existing := &opensearchv1.OpenSearchCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace},
+			Spec:       opensearchv1.ClusterSpec{General: opensearchv1.GeneralConfig{Version: "3.7.0"}},
+			Status:     opensearchv1.ClusterStatus{Version: "3.7.0"},
+		}
+		engine := validEngine()
+		engine.Version = "3.8.0"
+		c, cl := newTestContext(t, testInstance(engine), existing)
+
+		require.NoError(t, New().Sync(c))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.Equal(t, "3.8.0", got.Spec.General.Version,
+			"Sync applies whatever version Validate accepted; the operator performs the rolling upgrade")
+	})
+
 	t.Run("keeps the operator finalizer", func(t *testing.T) {
 		existing := &opensearchv1.OpenSearchCluster{ObjectMeta: metav1.ObjectMeta{
 			Name: testName, Namespace: testNamespace, Finalizers: []string{"Opensearch"},
@@ -225,6 +313,89 @@ func TestSync(t *testing.T) {
 		got := &opensearchv1.OpenSearchCluster{}
 		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
 		assert.Equal(t, []string{"Opensearch"}, got.Finalizers)
+	})
+
+	t.Run("dashboards not requested: disabled", func(t *testing.T) {
+		c, cl := newTestContext(t, testInstance(validEngine()))
+
+		require.NoError(t, New().Sync(c))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.False(t, got.Spec.Dashboards.Enable)
+	})
+
+	t.Run("dashboards requested: enabled and wired", func(t *testing.T) {
+		in := testInstance(validEngine())
+		in.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{Version: "3.7.0"}
+		c, cl := newTestContext(t, in)
+
+		require.NoError(t, New().Sync(c))
+
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testName}, got))
+		assert.True(t, got.Spec.Dashboards.Enable)
+		assert.Equal(t, "3.7.0", got.Spec.Dashboards.Version)
+		assert.Equal(t, "opensearchproject/opensearch-dashboards:3.7.0", *got.Spec.Dashboards.Image)
+		require.NotNil(t, got.Spec.Dashboards.Tls)
+		assert.True(t, got.Spec.Dashboards.Tls.Enable)
+		assert.True(t, got.Spec.Dashboards.Tls.Generate)
+	})
+
+	t.Run("data source: reconciles without erroring when the source is not ready yet", func(t *testing.T) {
+		in := testInstance(validEngine())
+		in.Spec.DataSource = &backupv1alpha1.DataSource{
+			Type:   backupv1alpha1.DataSourceTypeBackup,
+			Backup: &backupv1alpha1.DataSourceBackup{BackupRef: commonv1alpha1.ObjectRef{Name: "ghost"}},
+		}
+		c, _ := newTestContext(t, in)
+
+		// The source Backup does not exist; ReconcileDataSource stages a
+		// "waiting" status rather than failing the whole Sync.
+		require.NoError(t, New().Sync(c))
+
+		ds := c.GetDataSourceStatus()
+		require.NotNil(t, ds)
+		assert.False(t, ds.Done)
+	})
+}
+
+func TestBuildDashboardsConfig(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg := buildDashboardsConfig(corev1alpha1.ComponentSpec{}, "3.8.0", "opensearchproject/opensearch-dashboards:3.8.0")
+
+		assert.True(t, cfg.Enable)
+		assert.Equal(t, defaultDashboardsReplicas, cfg.Replicas)
+		assert.Equal(t, "3.8.0", cfg.Version)
+		require.NotNil(t, cfg.Tls)
+		assert.True(t, cfg.Tls.Enable)
+		assert.True(t, cfg.Tls.Generate)
+	})
+
+	t.Run("replicas override", func(t *testing.T) {
+		dashboards := corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](2)}
+
+		cfg := buildDashboardsConfig(dashboards, "3.8.0", "")
+
+		assert.Equal(t, int32(2), cfg.Replicas)
+	})
+
+	t.Run("service exposure", func(t *testing.T) {
+		dashboards := corev1alpha1.ComponentSpec{
+			Service: &corev1alpha1.Service{
+				ServiceType: corev1.ServiceTypeLoadBalancer,
+				Annotations: map[string]string{"example.com/lb": "internal"},
+				LoadBalancerService: &corev1alpha1.LoadBalancerService{
+					SourceRanges: corev1alpha1.SourceRanges{"10.0.0.0/8"},
+				},
+			},
+		}
+
+		cfg := buildDashboardsConfig(dashboards, "3.8.0", "")
+
+		assert.Equal(t, map[string]string{"example.com/lb": "internal"}, cfg.Annotations)
+		assert.Equal(t, corev1.ServiceTypeLoadBalancer, cfg.Service.Type)
+		assert.Equal(t, []string{"10.0.0.0/8"}, cfg.Service.LoadBalancerSourceRanges)
 	})
 }
 

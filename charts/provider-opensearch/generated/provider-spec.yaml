@@ -2,6 +2,13 @@
 # Do not edit manually. Run `make generate` to update.
 spec:
   componentTypes:
+    dashboards:
+      defaultVersion: 3.8.0
+      versions:
+        - image: opensearchproject/opensearch-dashboards:3.7.0
+          version: 3.7.0
+        - image: opensearchproject/opensearch-dashboards:3.8.0
+          version: 3.8.0
     opensearch:
       defaultVersion: 3.8.0
       versions:
@@ -10,7 +17,25 @@ spec:
         - image: opensearchproject/opensearch:3.8.0
           version: 3.8.0
   components:
+    dashboards:
+      type: dashboards
     engine:
+      parametersSchema:
+        openAPIV3Schema:
+          description: |-
+            OpensearchParameters defines the parameters for opensearch components.
+            Add fields here when the opensearch component type needs parameters
+            beyond what the base Instance spec provides.
+          properties:
+            configuration:
+              description: |-
+                Configuration is an opensearch.yml fragment (YAML), merged into the
+                node pool's additionalConfig. `configuration` is the conventional
+                property name for the engine configuration file inside a component's
+                parameters. Keys under the TLS, security, and discovery settings the
+                provider and operator manage are rejected.
+              type: string
+          type: object
       type: opensearch
   defaultVersion: 3.8.0
   release:
@@ -18,6 +43,15 @@ spec:
   topologies:
     standard:
       components:
+        dashboards:
+          optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas:
+                  minimum: 1
+                resources: {}
+                service: {}
         engine:
           supportedFields:
             openAPIV3Schema:
@@ -31,6 +65,7 @@ spec:
                     nodeSelector: {}
                     tolerations: {}
                     topologySpreadConstraints: {}
+                service: {}
                 storage: {}
               required:
                 - storage
@@ -39,6 +74,29 @@ spec:
       sections:
         advanced:
           components:
+            configuration:
+              fieldParams:
+                label: opensearch.yml
+                maxRows: 8
+                minRows: 3
+                multiline: true
+                placeholder: |
+                  cluster.routing.allocation.disk.threshold_enabled: false
+              path: spec.components.engine.parameters.configuration
+              uiType: text
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.engine.service.serviceType
+              uiType: select
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -53,6 +111,10 @@ spec:
               uiType: select
               validation:
                 required: true
+          componentsOrder:
+            - storageClass
+            - configuration
+            - externalAccess
           description: Configure advanced settings for your OpenSearch cluster
           label: Advanced configuration
         databaseVersion:
@@ -150,8 +212,10 @@ spec:
         - advanced
   versions:
     - components:
+        dashboards: 3.8.0
         engine: 3.8.0
       name: 3.8.0
     - components:
+        dashboards: 3.7.0
         engine: 3.7.0
       name: 3.7.0

@@ -1,0 +1,161 @@
+---
+# Optional features and the provider's admission rules, without the
+# OpenSearch operator (see deploy-provider-ci): configuration, external
+# access, Dashboards, version upgrades, and the changes the provider rejects.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: features
+spec:
+  description: |
+    An Instance with an opensearch.yml fragment, a LoadBalancer and
+    Dashboards; upgrading it; the updates admission rejects; and turning
+    Dashboards and the LoadBalancer off again.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters,services -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 100
+
+  steps:
+    - name: provider-deployed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    - name: instance-ready-with-external-host
+      try:
+        # k3d runs no LoadBalancer controller: assign the address by hand,
+        # then simulate the operator reporting a healthy cluster.
+        - script:
+            content: |
+              set -e
+              kubectl -n $NAMESPACE patch service/test-instance-exposed --subresource status --type merge \
+                -p '{"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.7"}]}}}'
+              kubectl -n $NAMESPACE create secret generic test-instance-admin-password \
+                --from-literal=username=admin --from-literal=password=admin
+              kubectl -n $NAMESPACE patch opensearchcluster/test-instance --subresource status --type merge \
+                -p '{"status":{"phase":"RUNNING","initialized":true,"health":"green","availableNodes":1,"componentsStatus":[],"version":"3.7.0"}}'
+        - assert:
+            file: 20-assert.yaml
+
+    - name: upgrade
+      try:
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                version: "3.8.0"
+        # The bundle moves the engine and Dashboards together.
+        - assert:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpenSearchCluster
+              metadata:
+                name: test-instance
+              spec:
+                general:
+                  version: 3.8.0
+                  image: opensearchproject/opensearch:3.8.0
+                dashboards:
+                  version: 3.8.0
+
+    - name: admission-rejects-unsafe-changes
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge -p '{"spec":{"version":"3.7.0"}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.version')): true
+              (contains($stderr, 'cannot be downgraded from 3.8.0 to 3.7.0')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"components":{"engine":{"storage":{"storageClass":"other"}}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.components[engine].storage.storageClass')): true
+              (contains($stderr, 'cannot be changed after creation')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"components":{"engine":{"storage":{"size":"5Gi"}}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.components[engine].storage.size')): true
+              (contains($stderr, 'cannot be decreased from 10Gi to 5Gi')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"components":{"engine":{"parameters":{"configuration":"network.host: 0.0.0.0\n"}}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.components[engine].parameters.configuration')): true
+              (contains($stderr, 'network.host')): true
+              (contains($stderr, 'is managed by the provider')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"components":{"dashboards":{"version":"3.7.0"}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.components[dashboards].version')): true
+              (contains($stderr, 'must match the engine version 3.8.0')): true
+
+    - name: disable-dashboards
+      try:
+        # Stand in for what the operator created for Dashboards.
+        - apply:
+            file: 40-dashboards-leftovers.yaml
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type json \
+                -p '[{"op":"remove","path":"/spec/components/dashboards"}]'
+        - assert:
+            file: 40-assert.yaml
+        - error:
+            file: 40-dashboards-leftovers.yaml
+
+    - name: drop-external-access
+      try:
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                components:
+                  engine:
+                    service:
+                      serviceType: ClusterIP
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: test-instance-exposed
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: test-instance-conn
+              data:
+                (base64_decode(host)): (join('.', ['test-instance', $namespace, 'svc']))

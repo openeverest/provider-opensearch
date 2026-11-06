@@ -1,0 +1,35 @@
+# An Instance using the optional features: an opensearch.yml fragment, a
+# LoadBalancer for external access, and Dashboards.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+spec:
+  providerRef:
+    name: opensearch
+  version: "3.7.0"
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi
+        storageClass: local-path
+      parameters:
+        configuration: |
+          indices:
+            query:
+              bool:
+                max_clause_count: 10000000
+          cluster.routing.allocation.disk.threshold_enabled: false
+      service:
+        serviceType: LoadBalancer
+    dashboards:
+      replicas: 2
+      resources:
+        limits:
+          cpu: 500m
+          memory: 1Gi

@@ -1,0 +1,133 @@
+---
+# End-to-end suite against the real OpenSearch operator (see
+# deploy-provider-e2e): create an Instance, wait for the operator to
+# actually start OpenSearch and report it healthy — no status faking, unlike
+# the core suite — then verify the connection details the provider publishes
+# really work against the live cluster.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: e2e-cluster
+spec:
+  description: |
+    Instance reaches Ready against a real OpenSearchCluster, the published
+    connection details work with TLS verified, it scales to three nodes, and
+    deleting it removes the cluster, its secrets and its volumes.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get pods
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 200
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=operator
+        tail: 200
+
+  steps:
+    - name: provider-and-operator-deployed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+
+    - name: instance-ready
+      try:
+        # The real operator pulling the OpenSearch image and starting a node
+        # takes much longer than the suite's default 30s assert timeout.
+        - assert:
+            file: 20-assert.yaml
+            timeout: 8m
+
+    - name: connection-works
+      try:
+        - apply:
+            file: ../lib/toolbox.yaml
+        - assert:
+            file: ../lib/toolbox-assert.yaml
+        # With the published host, port and credentials, TLS verified against
+        # the operator's CA.
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET /_cluster/health
+            check:
+              ($error == null): true
+              (json_parse($stdout).status): green
+
+    - name: scale-up
+      try:
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                components:
+                  engine:
+                    replicas: 3
+        # Each new node pulls the image and attaches a volume.
+        - assert:
+            timeout: 15m
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpenSearchCluster
+              metadata:
+                name: test-instance
+              status:
+                availableNodes: 3
+                health: green
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              status:
+                phase: Ready
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET /_cluster/health
+            check:
+              (json_parse($stdout).number_of_nodes): 3
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-instance
+        - wait:
+            apiVersion: opensearch.org/v1
+            kind: OpenSearchCluster
+            name: test-instance
+            timeout: 2m
+            for:
+              deletion: {}
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: test-instance-admin-password
+        # The volumes hold the only copy of the data and go with the cluster.
+        - error:
+            timeout: 3m
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                labels:
+                  opensearch.org/opensearch-cluster: test-instance

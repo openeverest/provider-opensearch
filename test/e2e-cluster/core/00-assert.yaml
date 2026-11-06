@@ -1,0 +1,17 @@
+# The provider and the real OpenSearch operator (see deploy-provider-e2e)
+# must both be deployed and ready before the suite runs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-opensearch
+  namespace: provider-system
+status:
+  readyReplicas: 1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-opensearch-operator
+  namespace: provider-system
+status:
+  readyReplicas: 1

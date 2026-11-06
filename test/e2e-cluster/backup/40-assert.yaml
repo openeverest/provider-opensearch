@@ -1,0 +1,13 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: destination
+status:
+  phase: Ready
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: destination-datasource
+status:
+  state: Succeeded

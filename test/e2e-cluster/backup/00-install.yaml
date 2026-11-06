@@ -1,0 +1,22 @@
+# Credentials and the BackupStorage for the SeaweedFS from testdata/seaweedfs.yaml.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seaweedfs-credentials
+stringData:
+  AWS_ACCESS_KEY_ID: seaweedfsadmin
+  AWS_SECRET_ACCESS_KEY: seaweedfsadmin
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: BackupStorage
+metadata:
+  name: seaweedfs
+spec:
+  type: s3
+  s3:
+    bucket: backups
+    region: us-east-1
+    endpointURL: http://seaweedfs.seaweedfs.svc:8333
+    forcePathStyle: true
+    credentialsSecretRef:
+      name: seaweedfs-credentials

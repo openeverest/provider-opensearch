@@ -1,0 +1,18 @@
+# Unlike the core suite, nothing here is faked: this is the real operator's
+# own status, reached by actually starting OpenSearch.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+status:
+  phase: RUNNING
+  initialized: true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready
+  connectionSecretRef:
+    name: test-instance-conn

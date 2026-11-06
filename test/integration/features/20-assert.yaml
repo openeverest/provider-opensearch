@@ -1,0 +1,15 @@
+# The connection details point at the address the LoadBalancer was given.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-instance-conn
+data:
+  host: MjAzLjAuMTEzLjc=  # 203.0.113.7
+  port: OTIwMA==          # 9200

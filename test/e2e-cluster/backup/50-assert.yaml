@@ -1,0 +1,12 @@
+# Snapshots the schedule takes are mirrored into Backup CRs.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+spec:
+  scheduleName: every-minute
+  storageRef:
+    name: seaweedfs
+  origin:
+    instanceRef:
+      name: source
+status:
+  state: Succeeded

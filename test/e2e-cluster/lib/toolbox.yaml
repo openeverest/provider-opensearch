@@ -1,0 +1,12 @@
+# A pod to reach the Instances' REST API from inside the cluster, used by
+# opensearch.sh.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: toolbox
+spec:
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.0
+      command: [sleep, "86400"]
+  terminationGracePeriodSeconds: 0

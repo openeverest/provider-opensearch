@@ -20,6 +20,7 @@ config:
           storage: {}
           resources: {}
           replicas: {minimum: 1}
+          service: {}
           # schedulerName is omitted: OpenSearchCluster node pools cannot set it.
           schedulingPolicy:
             properties:
@@ -27,6 +28,16 @@ config:
               nodeSelector: {}
               tolerations: {}
               topologySpreadConstraints: {}
+    dashboards:
+      optional: true
+      defaults:
+        replicas: 1
+      # Dashboards is stateless: no storage field, unlike engine.
+      supportedFields:
+        properties:
+          resources: {}
+          replicas: {minimum: 1}
+          service: {}
 
 ui:
   sections:
@@ -136,6 +147,36 @@ ui:
             required: true
           dataSource:
             provider: storageClasses
+        configuration:
+          uiType: text
+          path: spec.components.engine.parameters.configuration
+          fieldParams:
+            label: "opensearch.yml"
+            placeholder: |2
+              cluster.routing.allocation.disk.threshold_enabled: false
+            multiline: true
+            minRows: 3
+            maxRows: 8
+        externalAccess:
+          uiType: select
+          path: spec.components.engine.service.serviceType
+          fieldParams:
+            label: "External access"
+            defaultValue: "ClusterIP"
+            options:
+              - label: "ClusterIP"
+                value: "ClusterIP"
+              - label: "LoadBalancer"
+                value: "LoadBalancer"
+              - label: "NodePort"
+                value: "NodePort"
+            # TODO: Support Service annotation and LoadBalancer source ranges configuration
+            # https://github.com/openeverest/openeverest/issues/1959
+            # https://github.com/openeverest/openeverest/issues/2398
+      componentsOrder:
+        - storageClass
+        - configuration
+        - externalAccess
   sectionsOrder:
     - databaseVersion
     - resources

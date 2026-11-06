@@ -11,6 +11,7 @@ import (
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
+	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 )
@@ -61,6 +62,25 @@ func TestClusterStatus(t *testing.T) {
 			name:    "upgrading",
 			status:  opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseUpgrading, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth},
 			phase:   corev1alpha1.InstancePhaseUpdating,
+			details: true,
+		},
+		{
+			// Between two node restarts every node is up and the cluster green.
+			name: "rolling restart in progress",
+			status: opensearchv1.ClusterStatus{
+				Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+				ComponentsStatus: []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "InProgress"}},
+			},
+			phase:   corev1alpha1.InstancePhaseUpdating,
+			details: true,
+		},
+		{
+			name: "rolling restart finished",
+			status: opensearchv1.ClusterStatus{
+				Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+				ComponentsStatus: []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "Finished"}},
+			},
+			phase:   corev1alpha1.InstancePhaseReady,
 			details: true,
 		},
 		{
@@ -134,6 +154,71 @@ func TestStatus(t *testing.T) {
 		assert.Equal(t, "secret", got.ConnectionDetails.Password)
 	})
 
+	readyCluster := func() *opensearchv1.OpenSearchCluster {
+		return testCluster(3, opensearchv1.ClusterStatus{
+			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+		})
+	}
+	adminSecret := func() *corev1.Secret {
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: adminSecretName(testName), Namespace: testNamespace},
+			Data:       map[string][]byte{"username": []byte("admin"), "password": []byte("secret")},
+		}
+	}
+
+	t.Run("load balancer address is published", func(t *testing.T) {
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: exposedServiceName(testName), Namespace: testNamespace},
+			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer},
+			Status: corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{{IP: "203.0.113.7"}},
+			}},
+		}
+		c, _ := newTestContext(t, testInstance(validEngine()), readyCluster(), adminSecret(), svc)
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, "203.0.113.7", got.ConnectionDetails.Host)
+		assert.Equal(t, "https://admin:secret@203.0.113.7:9200", got.ConnectionDetails.URI)
+	})
+
+	t.Run("load balancer without an address keeps the in-cluster host", func(t *testing.T) {
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: exposedServiceName(testName), Namespace: testNamespace},
+			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer},
+		}
+		c, _ := newTestContext(t, testInstance(validEngine()), readyCluster(), adminSecret(), svc)
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, testName+"."+testNamespace+".svc", got.ConnectionDetails.Host)
+	})
+
+	t.Run("running restore reports restoring", func(t *testing.T) {
+		restore := testRestore("my-backup")
+		restore.Status.State = backupv1alpha1.RestoreStateRunning
+		c, _ := newTestContext(t, testInstance(validEngine()), readyCluster(), adminSecret(), restore)
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseRestoring, got.Phase)
+		assert.Equal(t, "secret", got.ConnectionDetails.Password)
+	})
+
+	t.Run("finished restore does not override", func(t *testing.T) {
+		restore := testRestore("my-backup")
+		restore.Status.State = backupv1alpha1.RestoreStateSucceeded
+		c, _ := newTestContext(t, testInstance(validEngine()), readyCluster(), adminSecret(), restore)
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseReady, got.Phase)
+	})
+
 	t.Run("initialized without admin secret requeues", func(t *testing.T) {
 		cluster := testCluster(3, opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true})
 		c, _ := newTestContext(t, testInstance(validEngine()), cluster)
@@ -141,5 +226,48 @@ func TestStatus(t *testing.T) {
 		_, err := New().Status(c)
 
 		assert.Error(t, err)
+	})
+
+	t.Run("data source restoring overrides a ready cluster", func(t *testing.T) {
+		cluster := testCluster(3, opensearchv1.ClusterStatus{
+			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+		})
+		c, _ := newTestContext(t, testInstance(validEngine()), cluster)
+		c.SetDataSourceStatus(controller.DataSourceStatus{Done: false, Message: "restoring from backup"})
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseRestoring, got.Phase)
+	})
+
+	t.Run("data source failed overrides a ready cluster", func(t *testing.T) {
+		cluster := testCluster(3, opensearchv1.ClusterStatus{
+			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+		})
+		c, _ := newTestContext(t, testInstance(validEngine()), cluster)
+		c.SetDataSourceStatus(controller.DataSourceStatus{Done: true, State: controller.DataSourceStateFailed, Message: "source backup not found"})
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseFailed, got.Phase)
+	})
+
+	t.Run("data source succeeded does not override", func(t *testing.T) {
+		cluster := testCluster(3, opensearchv1.ClusterStatus{
+			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+		})
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: adminSecretName(testName), Namespace: testNamespace},
+			Data:       map[string][]byte{"username": []byte("admin"), "password": []byte("secret")},
+		}
+		c, _ := newTestContext(t, testInstance(validEngine()), cluster, secret)
+		c.SetDataSourceStatus(controller.DataSourceStatus{Done: true, State: controller.DataSourceStateSucceeded})
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.InstancePhaseReady, got.Phase)
 	})
 }

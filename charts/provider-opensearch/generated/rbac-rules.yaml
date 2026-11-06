@@ -3,6 +3,15 @@
 - apiGroups:
     - ""
   resources:
+    - configmaps
+  verbs:
+    - delete
+    - get
+    - list
+    - watch
+- apiGroups:
+    - ""
+  resources:
     - events
   verbs:
     - create
@@ -11,6 +20,7 @@
     - ""
   resources:
     - secrets
+    - services
   verbs:
     - create
     - delete
@@ -19,6 +29,46 @@
     - patch
     - update
     - watch
+- apiGroups:
+    - apps
+  resources:
+    - deployments
+  verbs:
+    - delete
+    - get
+    - list
+    - watch
+- apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backupclasses
+    - backupstorages
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backups
+    - restores
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backups/status
+    - restores/status
+  verbs:
+    - get
+    - patch
+    - update
 - apiGroups:
     - coordination.k8s.io
   resources:
@@ -67,6 +117,7 @@
     - opensearch.org
   resources:
     - opensearchclusters
+    - opensearchsnapshotpolicies
   verbs:
     - create
     - delete
@@ -81,3 +132,11 @@
     - opensearchclusters/status
   verbs:
     - get
+- apiGroups:
+    - storage.k8s.io
+  resources:
+    - storageclasses
+  verbs:
+    - get
+    - list
+    - watch

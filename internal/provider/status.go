@@ -34,6 +34,10 @@ func clusterStatus(cluster *opensearchv1.OpenSearchCluster, details controller.C
 		s = controller.Updating("Upgrading OpenSearch to " + cluster.Spec.General.Version)
 	case st.AvailableNodes < desired:
 		s = controller.Updating(fmt.Sprintf("%d of %d nodes available", st.AvailableNodes, desired))
+	case rollingRestartInProgress(st):
+		// Between two node restarts every node can be up and the cluster
+		// green, while the operator still has nodes to restart.
+		s = controller.Updating("Restarting nodes to apply configuration changes")
 	case st.Health == opensearchv1.OpenSearchGreenHealth:
 		s = controller.Ready()
 	case st.Health == opensearchv1.OpenSearchYellowHealth:
@@ -53,6 +57,30 @@ func healthOrUnknown(h opensearchv1.OpenSearchHealth) opensearchv1.OpenSearchHea
 		return opensearchv1.OpenSearchUnknownHealth
 	}
 	return h
+}
+
+// rollingRestartComponent is the componentsStatus entry the operator keeps
+// while it restarts nodes one by one.
+const rollingRestartComponent = "RollingRestart"
+
+func rollingRestartInProgress(st opensearchv1.ClusterStatus) bool {
+	for _, cs := range st.ComponentsStatus {
+		if cs.Component == rollingRestartComponent && cs.Status == "InProgress" {
+			return true
+		}
+	}
+	return false
+}
+
+// withHost points the connection details at host, keeping port and
+// credentials.
+func withHost(details controller.ConnectionDetails, host string) controller.ConnectionDetails {
+	details.Host = host
+	if u, err := url.Parse(details.URI); err == nil {
+		u.Host = net.JoinHostPort(host, details.Port)
+		details.URI = u.String()
+	}
+	return details
 }
 
 // connectionDetails builds the HTTPS endpoint of the cluster's client
