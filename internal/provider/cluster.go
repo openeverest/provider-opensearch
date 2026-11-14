@@ -6,6 +6,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
@@ -106,6 +107,7 @@ func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec, additi
 		Replicas:         defaultReplicas,
 		Roles:            standardRoles,
 		Resources:        nodeResources(engine.Resources),
+		Pdb:              nodePoolPDB(),
 		Persistence: &opensearchv1.PersistenceConfig{
 			PersistenceSource: opensearchv1.PersistenceSource{
 				PVC: &opensearchv1.PVCSource{
@@ -137,6 +139,16 @@ func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec, additi
 	}
 
 	return pool
+}
+
+// nodePoolPDB lets voluntary disruptions (node drains, cluster autoscaler)
+// evict at most one OpenSearch node at a time, so a 3-node cluster keeps its
+// cluster-manager quorum. maxUnavailable rather than minAvailable keeps a
+// 1-node Instance drainable. The operator's own restarts and upgrades delete
+// pods directly and are not limited by it.
+func nodePoolPDB() *opensearchv1.PdbConfig {
+	maxUnavailable := intstr.FromInt32(1)
+	return &opensearchv1.PdbConfig{Enable: true, MaxUnavailable: &maxUnavailable}
 }
 
 // buildDashboardsConfig maps the optional dashboards component onto the

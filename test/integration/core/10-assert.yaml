@@ -28,6 +28,9 @@ spec:
         - cluster_manager
         - data
         - ingest
+      pdb:
+        enable: true
+        maxUnavailable: 1
       resources:
         limits:
           cpu: "1"
