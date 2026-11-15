@@ -47,6 +47,7 @@ manages pods directly — all lifecycle work is delegated to the operator.
 
 | provider-opensearch | OpenEverest | OpenSearch operator | OpenSearch | Kubernetes |
 |---|---|---|---|---|
+| `0.2.x` | `2.0.0-dev.3` | `3.0.x` (chart `3.0.14`) | `3.7`, `3.8` | `1.30` – `1.35` |
 | `0.1.x` | `2.0.0-dev.3` | `3.0.x` (chart `3.0.14`) | `3.7`, `3.8` | `1.30` – `1.34` |
 
 ## Capabilities
