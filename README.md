@@ -306,7 +306,9 @@ Worth knowing:
   the same `OpenSearchCluster`. Supported fields: `replicas`, `resources`, and `service`
   (`serviceType`, `annotations`, `loadBalancerService.sourceRanges` — the operator supports a
   real service type for Dashboards, unlike the main engine). TLS is always generated, and the
-  version always matches the engine's (admission rejects a different one). Removing the
+  version always matches the engine's (admission rejects a different one). On a new Instance,
+  Dashboards starts once the cluster has initialized, so it never races the cluster's first
+  start. Removing the
   component removes the Dashboards deployment. There is
   no UI form field for it yet (API/CLI only), matching the only other optional-component
   precedent in the OpenEverest ecosystem. Credentials live in the

@@ -259,7 +259,7 @@ func TestSync(t *testing.T) {
 	t.Run("dropping dashboards disables the block it applied", func(t *testing.T) {
 		withDashboards := testInstance(validEngine())
 		withDashboards.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](1), Resources: validEngine().Resources}
-		c, cl := newTestContext(t, withDashboards)
+		c, cl := newTestContext(t, withDashboards, runningCluster())
 		require.NoError(t, New().Sync(c))
 
 		without := testInstance(validEngine())
@@ -340,7 +340,7 @@ func TestSync(t *testing.T) {
 	t.Run("dashboards requested: enabled and wired", func(t *testing.T) {
 		in := testInstance(validEngine())
 		in.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{Version: "3.7.0"}
-		c, cl := newTestContext(t, in)
+		c, cl := newTestContext(t, in, runningCluster())
 
 		require.NoError(t, New().Sync(c))
 
@@ -352,6 +352,25 @@ func TestSync(t *testing.T) {
 		require.NotNil(t, got.Spec.Dashboards.Tls)
 		assert.True(t, got.Spec.Dashboards.Tls.Enable)
 		assert.True(t, got.Spec.Dashboards.Tls.Generate)
+	})
+
+	t.Run("dashboards requested: waits for the cluster to be initialized", func(t *testing.T) {
+		in := testInstance(validEngine())
+		in.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{}
+		c, cl := newTestContext(t, in)
+		key := client.ObjectKey{Namespace: testNamespace, Name: testName}
+
+		require.NoError(t, New().Sync(c))
+		got := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(context.Background(), key, got))
+		assert.False(t, got.Spec.Dashboards.Enable, "Dashboards must not start alongside a cluster that is still bootstrapping")
+
+		got.Status.Initialized = true
+		require.NoError(t, cl.Status().Update(context.Background(), got))
+		require.NoError(t, New().Sync(c))
+		require.NoError(t, cl.Get(context.Background(), key, got))
+		assert.True(t, got.Spec.Dashboards.Enable)
+		assert.Equal(t, "3.8.0", got.Spec.Dashboards.Version)
 	})
 
 	t.Run("data source: reconciles without erroring when the source is not ready yet", func(t *testing.T) {

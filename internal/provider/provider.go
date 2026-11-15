@@ -143,6 +143,14 @@ func (p *Provider) Sync(c *controller.Context) error {
 			dImage = controller.GetImageForVersion(spec, common.ComponentDashboards, dVersion)
 		}
 		cluster.Spec.Dashboards = buildDashboardsConfig(dashboards, dVersion, dImage)
+		// Held disabled until the cluster is initialized (which then stays
+		// true). The operator would start Dashboards alongside the cluster,
+		// and its startup probe can kill Dashboards during a slow first start,
+		// between creating .kibana_1 and pointing the alias at it; every later
+		// start then waits forever for "another instance" to finish the
+		// migration. The status change that marks the cluster initialized
+		// triggers the reconcile that enables it.
+		cluster.Spec.Dashboards.Enable = existing.Status.Initialized
 	} else if existing.Spec.Dashboards.Enable || existing.Spec.Dashboards.Version != "" {
 		// Once configured, the block stays in every apply, disabled.
 		cluster.Spec.Dashboards = disabledDashboardsConfig(existing.Spec.Dashboards)
