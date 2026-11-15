@@ -130,7 +130,9 @@ func (p *Provider) Sync(c *controller.Context) error {
 	// Apply replaces metadata wholesale; keep the operator's finalizer so it
 	// is not stripped and re-added on every reconcile.
 	existing := &opensearchv1.OpenSearchCluster{}
+	exists := false
 	if err := c.Get(existing, c.Name()); err == nil {
+		exists = true
 		cluster.Finalizers = existing.Finalizers
 	} else if !apierrors.IsNotFound(err) {
 		return err
@@ -156,7 +158,16 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.Dashboards = disabledDashboardsConfig(existing.Spec.Dashboards)
 	}
 
-	if err := c.Apply(cluster); err != nil {
+	// A held provider-initiated change leaves the cluster as it is; the rest
+	// of the Instance is still kept in sync. Enabling requested Dashboards
+	// once the cluster is initialized carries out the user's request, so it
+	// counts as an input rather than a provider-initiated change.
+	otherInputs := struct {
+		Repos             []opensearchv1.SnapshotRepoConfig `json:"repos,omitempty"`
+		Keystore          []opensearchv1.KeystoreValue      `json:"keystore,omitempty"`
+		DashboardsEnabled bool                              `json:"dashboardsEnabled,omitempty"`
+	}{snapshotRepos, keystore, cluster.Spec.Dashboards.Enable}
+	if err := applyClusterGated(c, cluster, exists, otherInputs); err != nil {
 		return err
 	}
 

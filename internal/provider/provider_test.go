@@ -262,7 +262,10 @@ func TestSync(t *testing.T) {
 		c, cl := newTestContext(t, withDashboards, runningCluster())
 		require.NoError(t, New().Sync(c))
 
-		without := testInstance(validEngine())
+		without := &corev1alpha1.Instance{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(withDashboards), without))
+		delete(without.Spec.Components, common.ComponentDashboards)
+		require.NoError(t, cl.Update(context.Background(), without))
 		require.NoError(t, New().Sync(controller.NewContext(context.Background(), cl, without, common.ProviderName)))
 
 		got := &opensearchv1.OpenSearchCluster{}

@@ -1,0 +1,17 @@
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  general:
+    version: 3.8.0
+    image: opensearchproject/opensearch:3.8.0-rebuilt
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  (length(pendingMaintenance || `[]`)): 0
+  (conditions[?type == 'MaintenancePending']):
+    - status: "False"

@@ -118,9 +118,27 @@ keeps when the hook fails:
 kubectl logs -n everest-system job/provider-opensearch-preflight
 ```
 
-A provider upgrade can itself restart the nodes one by one, when the new release changes how
-the cluster is rendered or bundles a newer operator. These restarts are not yet held for
-approval through `spec.maintenance`; upgrade the provider in a maintenance window.
+A provider upgrade can change how an existing cluster is rendered: new defaults, or a new
+image for a version bundle. That change restarts the nodes one by one, so it is held as a
+`RollingRestart` maintenance action and listed in the Instance's `status.pendingMaintenance`
+until it is approved:
+
+```bash
+kubectl get instance my-search -o jsonpath='{.status.pendingMaintenance}'
+kubectl patch instance my-search --type merge \
+  -p '{"spec":{"maintenance":{"approved":"<approvalToken>"}}}'
+```
+
+Set `spec.maintenance.autoApproveUpTo: RollingRestart` to apply such changes without asking. A
+change to the Instance itself applies right away, together with any held change. Two cases are
+not held:
+
+- A cluster last reconciled by a provider release without maintenance gating has no record
+  of what was applied yet. Its first reconcile after the upgrade applies the new rendering
+  and records it.
+- A newer bundled OpenSearch operator may restart the nodes on its own, without any change
+  from the provider. Upgrade the provider in a maintenance window when the release notes
+  mention an operator upgrade.
 
 Uninstalling the chart does **not** delete running `Instance` resources or their data.
 
@@ -249,7 +267,8 @@ Worth knowing:
   class's `allowVolumeExpansion` is not `true`.
 - **Rolling restarts** — changing the version, resources, custom configuration, or enabling
   backups restarts the nodes one by one. Restarts the user asks for are applied right away;
-  `spec.maintenance` does not hold them. Scaling and Dashboards changes do
+  `spec.maintenance` holds only the ones a provider upgrade causes (see
+  [Installation](#installation)). Scaling and Dashboards changes do
   not restart the OpenSearch nodes.
 - **Version changes** — downgrades and upgrades that skip a major version are rejected; see
   [Versions](#versions).
