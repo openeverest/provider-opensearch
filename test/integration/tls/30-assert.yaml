@@ -1,0 +1,39 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: wrong-name
+status:
+  phase: Pending
+  (conditions[?type == 'Ready']):
+    - reason: InvalidReference
+      (contains(message, join('', ['is not valid for wrong-name.', $namespace, '.svc']))): true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pkcs1-key
+status:
+  phase: Pending
+  (conditions[?type == 'Ready']):
+    - reason: InvalidReference
+      (contains(message, 'PKCS#8')): true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: missing-cert
+status:
+  phase: Pending
+  (conditions[?type == 'Ready']):
+    - reason: InvalidReference
+      (contains(message, 'missing-cert-cert')): true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: missing-issuer
+status:
+  phase: Pending
+  (conditions[?type == 'Ready']):
+    - reason: InvalidReference
+      (contains(message, 'no-such-issuer')): true

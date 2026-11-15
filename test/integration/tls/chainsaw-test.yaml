@@ -1,0 +1,156 @@
+---
+# Custom credentials and TLS suite: an HTTP certificate from a user Secret or
+# a cert-manager issuer, the admin password from spec.userSecretRef, and the
+# checks that hold back an Instance whose certificate cannot be used.
+#
+# The OpenSearch operator is not installed (see deploy-provider-ci), so the
+# suite simulates it like the core suite does. cert-manager is real
+# (install-cert-manager) and issues every certificate, including the ones
+# standing in for user-supplied Secrets (../../testdata/certificate.sh).
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: tls
+spec:
+  description: |
+    Instances with a user-supplied or issued HTTP certificate and a custom
+    admin password produce the right OpenSearchCluster security settings,
+    publish the CA clients need, are held back while their certificate is
+    unusable, and keep their certificate source and credentials once created.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get issuers,certificates,secrets
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 100
+
+  steps:
+    - name: create-instances
+      try:
+        - script:
+            timeout: 5m
+            content: ../../testdata/certificate.sh tls-secret-cert tls-secret.$NAMESPACE.svc
+        - apply:
+            file: 10-create-instances.yaml
+        - assert:
+            file: 10-assert.yaml
+            timeout: 1m
+
+    - name: instances-ready
+      try:
+        - script:
+            content: |
+              set -e
+              kubectl -n $NAMESPACE create secret generic tls-issuer-admin-password \
+                --from-literal=username=admin --from-literal=password=operator-password
+              for name in tls-secret tls-issuer; do
+                kubectl -n $NAMESPACE patch opensearchcluster/$name --subresource status --type merge \
+                  -p '{"status":{"phase":"RUNNING","initialized":true,"health":"green","availableNodes":1,"componentsStatus":[]}}'
+              done
+        - script:
+            content: kubectl -n $NAMESPACE get secret tls-secret-cert -o jsonpath='{.data.ca\.crt}'
+            outputs:
+              - name: userCA
+                value: ($stdout)
+        - script:
+            content: kubectl -n $NAMESPACE get secret tls-issuer-tls-http -o jsonpath='{.data.ca\.crt}'
+            outputs:
+              - name: issuerCA
+                value: ($stdout)
+        - assert:
+            file: 20-assert.yaml
+
+    - name: admission-rejects-changes
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance tls-secret --type merge \
+                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":null,"issuer":{"kind":"Issuer","name":"ca"}}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.parameters.tls')): true
+              (contains($stderr, 'keep secret "tls-secret-cert"')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance tls-issuer --type merge \
+                -p '{"spec":{"parameters":{"tls":null}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'keep Issuer "ca"')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance tls-issuer --type merge \
+                -p '{"spec":{"userSecretRef":{"name":"tls-secret-credentials"}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.userSecretRef')): true
+              (contains($stderr, 'can only be set when the instance is created')): true
+
+    - name: unusable-certificates-hold-instances
+      try:
+        - script:
+            timeout: 5m
+            content: |
+              set -e
+              ../../testdata/certificate.sh wrong-name-cert other.example.com
+              ../../testdata/certificate.sh pkcs1-key-cert pkcs1-key.$NAMESPACE.svc PKCS1
+        - apply:
+            file: 30-create-instances.yaml
+        - assert:
+            file: 30-assert.yaml
+            timeout: 1m
+        - error:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpenSearchCluster
+              metadata:
+                name: wrong-name
+        - error:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpenSearchCluster
+              metadata:
+                name: pkcs1-key
+        # The provider rechecks references every minute.
+        - script:
+            timeout: 5m
+            content: ../../testdata/certificate.sh missing-cert-cert missing-cert.$NAMESPACE.svc
+        - assert:
+            file: 31-assert.yaml
+            timeout: 2m
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: tls-issuer
+        - wait:
+            apiVersion: opensearch.org/v1
+            kind: OpenSearchCluster
+            name: tls-issuer
+            timeout: 1m
+            for:
+              deletion: {}
+        # Owned by the Instance, so garbage collected with it.
+        - error:
+            timeout: 1m
+            resource:
+              apiVersion: cert-manager.io/v1
+              kind: Certificate
+              metadata:
+                name: tls-issuer-tls-http
+        - error:
+            timeout: 1m
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: tls-issuer-tls-admin

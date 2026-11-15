@@ -1,0 +1,35 @@
+# The connection details carry the custom password and the CA the HTTP
+# certificate is verified with.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: tls-secret
+status:
+  phase: Ready
+  connectionSecretRef:
+    name: tls-secret-conn
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secret-conn
+data:
+  (base64_decode(host)): (join('', ['tls-secret.', $namespace, '.svc']))
+  (base64_decode(username)): admin
+  (base64_decode(password)): custom-Passw0rd
+  "ca.crt": ($userCA)
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: tls-issuer
+status:
+  phase: Ready
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-issuer-conn
+data:
+  (base64_decode(password)): operator-password
+  "ca.crt": ($issuerCA)

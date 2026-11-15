@@ -1,0 +1,31 @@
+# The real operator ran securityadmin with the provider's admin certificate
+# and brought both clusters up.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: tls-secret
+status:
+  phase: RUNNING
+  initialized: true
+---
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: tls-issuer
+status:
+  phase: RUNNING
+  initialized: true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: tls-secret
+status:
+  phase: Ready
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: tls-issuer
+status:
+  phase: Ready

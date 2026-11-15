@@ -1,0 +1,119 @@
+---
+# Custom credentials and TLS against the real OpenSearch operator and
+# cert-manager (install-cert-manager): OpenSearch must actually serve the
+# user's or the issued HTTP certificate, the operator must accept the
+# provider's admin certificate for securityadmin, and the custom admin
+# password must be the one that works.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: e2e-tls
+spec:
+  description: |
+    Instances with a user-supplied and an issued HTTP certificate reach Ready,
+    clients connect with the published CA and the custom admin password, and
+    a renewed certificate is served without restarting OpenSearch.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get pods,jobs,certificates,secrets
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 200
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=operator
+        tail: 200
+
+  steps:
+    - name: create-instances
+      try:
+        - script:
+            timeout: 5m
+            content: ../../testdata/certificate.sh tls-secret-cert tls-secret.$NAMESPACE.svc
+        - apply:
+            file: 10-create-instances.yaml
+
+    - name: instances-ready
+      try:
+        - assert:
+            file: 20-assert.yaml
+            timeout: 12m
+
+    - name: connections-work
+      try:
+        - apply:
+            file: ../lib/toolbox.yaml
+        - assert:
+            file: ../lib/toolbox-assert.yaml
+        # Verified against the user's CA, with the user's password.
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh tls-secret GET /_cluster/health
+            check:
+              ($error == null): true
+              (json_parse($stdout).status): green
+        - script:
+            timeout: 2m
+            content: |
+              kubectl -n $NAMESPACE get secret tls-secret-conn -o jsonpath='{.data.password}' | base64 -d
+            check:
+              ($stdout): custom-Passw0rd
+        - script:
+            timeout: 2m
+            env:
+              - name: OPENSEARCH_PASSWORD
+                value: wrong-password
+            content: ../lib/opensearch.sh tls-secret GET /_cluster/health
+            check:
+              ($error != null): true
+              (contains($stderr, '401')): true
+        # Verified against the CA of the cert-manager Issuer.
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh tls-issuer GET /_cluster/health
+            check:
+              ($error == null): true
+              (json_parse($stdout).status): green
+
+    - name: renewal-is-hot-reloaded
+      try:
+        # Renew the issued certificate the way `cmctl renew` does, then wait
+        # for OpenSearch to serve the new one from the same pod.
+        - script:
+            timeout: 8m
+            content: |
+              set -euo pipefail
+              pod() {
+                kubectl -n $NAMESPACE get pod tls-issuer-nodes-0 \
+                  -o jsonpath='{.metadata.uid}/{.status.containerStatuses[0].restartCount}'
+              }
+              before=$(./served-serial.sh tls-issuer)
+              pod_before=$(pod)
+              [ -n "$before" ]
+              kubectl -n $NAMESPACE patch certificate tls-issuer-tls-http --subresource status --type json -p "[
+                {\"op\":\"add\",\"path\":\"/status/conditions/-\",\"value\":{\"type\":\"Issuing\",\"status\":\"True\",
+                 \"reason\":\"ManuallyTriggered\",\"message\":\"Renewal requested by the e2e suite\",
+                 \"lastTransitionTime\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}]"
+              for _ in $(seq 90); do
+                after=$(./served-serial.sh tls-issuer || true)
+                if [ -n "$after" ] && [ "$after" != "$before" ]; then
+                  echo "served serial changed from $before to $after"
+                  [ "$(pod)" = "$pod_before" ] || { echo "OpenSearch restarted: $pod_before -> $(pod)"; exit 1; }
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "still serving $before"
+              exit 1
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh tls-issuer GET /_cluster/health
+            check:
+              ($error == null): true
+              (json_parse($stdout).status): green

@@ -134,6 +134,15 @@ jobs:
       suite: backup
     secrets: inherit
 
+  test-integration-tls:
+    name: Integration / tls
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-tls
+      suite: tls
+    secrets: inherit
+
   # Unlike the integration suites above, e2e-cluster deploys the real
   # OpenSearch operator (deploy-provider-e2e) instead of simulating it, so
   # the Instance must reach Ready against a genuinely running OpenSearch
@@ -165,4 +174,13 @@ jobs:
     with:
       make_target: test-e2e-cluster-backup
       suite: backup
+    secrets: inherit
+
+  test-e2e-cluster-tls:
+    name: E2E Cluster / tls
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-tls
+      suite: tls
     secrets: inherit
