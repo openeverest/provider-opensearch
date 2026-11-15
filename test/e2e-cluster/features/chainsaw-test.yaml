@@ -128,9 +128,15 @@ spec:
               kind: Deployment
               metadata:
                 name: test-instance-dashboards
+        # Replicas may still be recovering from the upgrade's last restart.
         - script:
-            timeout: 2m
-            content: ../lib/opensearch.sh test-instance GET /_cluster/health
+            timeout: 3m
+            content: |
+              for i in 1 2 3; do
+                out=$(../lib/opensearch.sh test-instance GET '/_cluster/health?wait_for_status=green&timeout=50s') \
+                  && { echo "$out"; exit 0; }
+              done
+              exit 1
             check:
               ($error == null): true
               (json_parse($stdout).status): green
