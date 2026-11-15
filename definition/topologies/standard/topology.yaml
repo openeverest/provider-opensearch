@@ -55,8 +55,6 @@ ui:
               labelPath: "name"
               valuePath: "name"
             modes:
-              edit:
-                disabled: true
               restore:
                 disabled: true
           validation:

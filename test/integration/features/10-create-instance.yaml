@@ -1,5 +1,6 @@
 # An Instance using the optional features: an opensearch.yml fragment, a
-# LoadBalancer for external access, and Dashboards.
+# LoadBalancer restricted to a source range for external access, and
+# Dashboards.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -27,6 +28,9 @@ spec:
           cluster.routing.allocation.disk.threshold_enabled: false
       service:
         serviceType: LoadBalancer
+        loadBalancerService:
+          sourceRanges:
+            - 198.51.100.0/24
     dashboards:
       replicas: 2
       resources:

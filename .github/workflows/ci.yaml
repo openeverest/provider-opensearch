@@ -184,3 +184,12 @@ jobs:
       make_target: test-e2e-cluster-tls
       suite: tls
     secrets: inherit
+
+  test-e2e-cluster-features:
+    name: E2E Cluster / features
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-features
+      suite: features
+    secrets: inherit

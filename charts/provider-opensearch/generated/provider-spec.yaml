@@ -310,8 +310,6 @@ spec:
               fieldParams:
                 label: OpenSearch Version
                 modes:
-                  edit:
-                    disabled: true
                   restore:
                     disabled: true
                 optionsPath: spec.versions
@@ -630,8 +628,6 @@ spec:
               fieldParams:
                 label: OpenSearch Version
                 modes:
-                  edit:
-                    disabled: true
                   restore:
                     disabled: true
                 optionsPath: spec.versions

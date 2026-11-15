@@ -1,0 +1,32 @@
+# Every node and Dashboards run the new bundle and the cluster is healthy.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+status:
+  phase: RUNNING
+  health: green
+  availableNodes: 3
+  version: 3.8.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-instance-dashboards
+spec:
+  template:
+    spec:
+      containers:
+        - name: dashboards
+          image: opensearchproject/opensearch-dashboards:3.8.0
+status:
+  readyReplicas: 1
+  updatedReplicas: 1
+  (unavailableReplicas == null || unavailableReplicas == `0`): true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready

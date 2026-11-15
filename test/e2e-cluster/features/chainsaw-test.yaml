@@ -1,0 +1,137 @@
+---
+# Version upgrades and Dashboards against the real OpenSearch operator (see
+# deploy-provider-e2e): a three-node cluster with Dashboards is upgraded to
+# the next bundle with its data intact, then Dashboards is turned off.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: e2e-cluster-features
+spec:
+  description: |
+    A 3.7.0 Instance with Dashboards reaches Ready and Dashboards answers
+    over verified TLS; changing spec.version rolls every node and Dashboards
+    to 3.8.0 with the data kept and the Instance back to Ready; removing the
+    dashboards component removes the Dashboards deployment.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get pods,deployments
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 200
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=operator
+        tail: 200
+
+  steps:
+    - name: provider-and-operator-deployed
+      try:
+        - assert:
+            file: ../core/00-assert.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+
+    - name: instance-ready
+      try:
+        # Three nodes and Dashboards pull their images and start.
+        - assert:
+            file: 20-assert.yaml
+            timeout: 15m
+
+    - name: data-and-dashboards
+      try:
+        - apply:
+            file: ../lib/toolbox.yaml
+        - assert:
+            file: ../lib/toolbox-assert.yaml
+        # A document with a replica on another node, to survive the upgrade.
+        - script:
+            timeout: 2m
+            content: |
+              set -e
+              ../lib/opensearch.sh test-instance PUT /upgrade-check \
+                '{"settings":{"number_of_shards":1,"number_of_replicas":1}}'
+              ../lib/opensearch.sh test-instance PUT '/upgrade-check/_doc/1?refresh=true' '{"bundle":"3.7.0"}'
+            check:
+              ($error == null): true
+        - script:
+            timeout: 3m
+            content: ../lib/dashboards.sh test-instance /api/status
+            check:
+              ($error == null): true
+              (json_parse($stdout).version.number): 3.7.0
+              (json_parse($stdout).status.overall.state): green
+
+    - name: upgrade
+      try:
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                version: "3.8.0"
+        # The operator restarts the nodes one by one, waiting for green
+        # health in between; the Instance reports it as an update.
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              status:
+                phase: Updating
+        - assert:
+            file: 40-assert.yaml
+            timeout: 30m
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET '/_nodes?filter_path=nodes.*.version'
+            check:
+              ($error == null): true
+              (length(values(json_parse($stdout).nodes)[?version == '3.8.0'])): 3
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET /upgrade-check/_count
+            check:
+              ($error == null): true
+              (json_parse($stdout).count): 1
+        - script:
+            timeout: 3m
+            content: ../lib/dashboards.sh test-instance /api/status
+            check:
+              ($error == null): true
+              (json_parse($stdout).version.number): 3.8.0
+              (json_parse($stdout).status.overall.state): green
+
+    - name: disable-dashboards
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type json \
+                -p '[{"op":"remove","path":"/spec/components/dashboards"}]'
+        - error:
+            timeout: 3m
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: test-instance-dashboards
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET /_cluster/health
+            check:
+              ($error == null): true
+              (json_parse($stdout).status): green
+              (json_parse($stdout).number_of_nodes): 3

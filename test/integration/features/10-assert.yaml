@@ -28,6 +28,8 @@ metadata:
   name: test-instance-exposed
 spec:
   type: LoadBalancer
+  loadBalancerSourceRanges:
+    - 198.51.100.0/24
   ports:
     - name: http
       port: 9200

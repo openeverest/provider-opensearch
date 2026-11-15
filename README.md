@@ -226,9 +226,10 @@ In the `dedicated` topology:
 
 Source of truth: [definition/versions.yaml](definition/versions.yaml).
 
-Change `spec.version` on a running Instance to upgrade it; the operator performs a rolling
-upgrade and the Instance reports `Updating` until every node runs the new version. Admission
-rejects downgrades and upgrades that skip a major version.
+Change `spec.version` on a running Instance, or pick a newer version when editing it in the UI,
+to upgrade it. The operator performs a rolling upgrade and the Instance reports `Updating` until
+every node runs the new version; Dashboards moves to the same bundle. Admission rejects
+downgrades and upgrades that skip a major version.
 
 ## Configuration
 
