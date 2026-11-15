@@ -15,7 +15,8 @@ func TestUISchemaIsReconciled(t *testing.T) {
 			// probe is not valid YAML-mapping syntax, so Sync correctly rejects
 			// it. Covered directly by TestResolveAdditionalConfig, TestFlattenConfig
 			// and TestBuildNodePoolAdditionalConfig.
-			"spec.components.engine.parameters.configuration": "probe value is not valid YAML; see configuration_test.go",
+			"spec.components.engine.parameters.configuration":         "probe value is not valid YAML; see configuration_test.go",
+			"spec.components.clusterManager.parameters.configuration": "probe value is not valid YAML; see configuration_test.go",
 		},
 	})
 }

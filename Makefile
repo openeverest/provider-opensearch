@@ -156,6 +156,10 @@ test-integration-core: ## Run core integration tests.
 test-integration-features: ## Run the optional features and admission integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/features
 
+.PHONY: test-integration-dedicated
+test-integration-dedicated: ## Run the dedicated topology integration tests.
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/dedicated
+
 .PHONY: test-integration-backup
 test-integration-backup: ## Run the backup configuration integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup
@@ -167,6 +171,10 @@ test-e2e-cluster: ## Run all e2e-cluster tests (requires the real OpenSearch ope
 .PHONY: test-e2e-cluster-core
 test-e2e-cluster-core: ## Run the core e2e-cluster suite (requires the real OpenSearch operator, see deploy-provider-e2e).
 	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/core
+
+.PHONY: test-e2e-cluster-dedicated
+test-e2e-cluster-dedicated: ## Run the dedicated topology e2e-cluster suite (requires the real OpenSearch operator, see deploy-provider-e2e).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/dedicated
 
 .PHONY: test-e2e-cluster-backup
 test-e2e-cluster-backup: ## Run the backup and restore e2e-cluster suite (requires the real OpenSearch operator, see deploy-provider-e2e).

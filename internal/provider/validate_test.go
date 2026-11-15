@@ -1,10 +1,13 @@
 package provider
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,6 +20,8 @@ import (
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller/validationtest"
+
+	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
 // TestValidate runs the checks the runtime runs at admission and before every
@@ -32,6 +37,8 @@ func TestValidate(t *testing.T) {
 		old string
 		// want lists the field paths of the expected errors.
 		want []string
+		// warning is a substring of an expected admission warning.
+		warning string
 	}{
 		{fixture: "minimal.yaml"},
 		{fixture: "configuration.yaml"},
@@ -48,6 +55,17 @@ func TestValidate(t *testing.T) {
 		{fixture: "dashboards-version-mismatch.yaml", want: []string{"spec.components[dashboards].version"}},
 		{fixture: "unknown-component.yaml", want: []string{"spec.components[monitoring]"}},
 		{fixture: "invalid-schedule-name.yaml", want: []string{"spec.backup.storages[0].schedules[0].name"}},
+		{fixture: "standard-explicit.yaml"},
+		{fixture: "standard-with-manager.yaml", want: []string{"spec.components[clusterManager]"}},
+
+		// Dedicated topology.
+		{fixture: "dedicated.yaml"},
+		{fixture: "dedicated-coordinators.yaml"},
+		{fixture: "dedicated-single-manager.yaml", warning: "single cluster manager"},
+		{fixture: "dedicated-even-managers.yaml", want: []string{"spec.components[clusterManager].replicas"}},
+		{fixture: "dedicated-manager-missing.yaml", want: []string{"spec.components[clusterManager]"}},
+		{fixture: "dedicated-coordinator-storage.yaml", want: []string{"spec.components[coordinator].storage"}},
+		{fixture: "dedicated-coordinator-memory-too-small.yaml", want: []string{"spec.components[coordinator].resources.requests.memory"}},
 
 		// Transitions, only checked on an update at admission.
 		{fixture: "version-3.8.0.yaml", old: "version-3.7.0.yaml"},
@@ -58,6 +76,13 @@ func TestValidate(t *testing.T) {
 		{fixture: "minimal.yaml", old: "storage-20gi.yaml", want: []string{"spec.components[engine].storage.size"}},
 		{fixture: "storage-class-slow.yaml", old: "storage-class-fast.yaml", want: []string{"spec.components[engine].storage.storageClass"}},
 		{fixture: "storage-class-fast.yaml", old: "minimal.yaml", want: []string{"spec.components[engine].storage.storageClass"}},
+		{fixture: "minimal.yaml", old: "standard-explicit.yaml"},
+		{fixture: "dedicated.yaml", old: "minimal.yaml", want: []string{"spec.topology.type"}},
+		{fixture: "minimal.yaml", old: "dedicated.yaml", want: []string{"spec.topology.type"}},
+		{fixture: "dedicated-coordinators.yaml", old: "dedicated.yaml"},
+		{fixture: "dedicated.yaml", old: "dedicated-coordinators.yaml"},
+		{fixture: "dedicated-manager-storage-20gi.yaml", old: "dedicated.yaml"},
+		{fixture: "dedicated.yaml", old: "dedicated-manager-storage-20gi.yaml", want: []string{"spec.components[clusterManager].storage.size"}},
 	}
 
 	for _, tt := range tests {
@@ -80,6 +105,11 @@ func TestValidate(t *testing.T) {
 				got = append(got, err.Field)
 			}
 			assert.Equal(t, tt.want, got, "errors: %v", res.Errors)
+			if tt.warning != "" {
+				assert.True(t, slices.ContainsFunc(res.Warnings, func(w string) bool {
+					return strings.Contains(w, tt.warning)
+				}), "warnings: %v", res.Warnings)
+			}
 		})
 	}
 }
@@ -255,4 +285,61 @@ func TestValidateReferencesBackupStorage(t *testing.T) {
 	require.NoError(t, err)
 	// A missing storage is reported by the runtime, not here.
 	assert.Equal(t, []string{"spec.backup.storages[1].storageRef.name"}, fieldsOf(errs))
+}
+
+func TestValidateReferencesDedicated(t *testing.T) {
+	dedicatedCluster := func() *opensearchv1.OpenSearchCluster {
+		cluster := existingCluster("", nil)
+		pvc := cluster.Spec.NodePools[0].Persistence
+		cluster.Spec.NodePools = []opensearchv1.NodePool{
+			{Component: managerPoolName, DiskSize: resource.MustParse("5Gi"), Persistence: pvc},
+			{Component: dataPoolName, DiskSize: resource.MustParse("10Gi"), Persistence: pvc},
+			{Component: coordinatorPoolName, Persistence: &opensearchv1.PersistenceConfig{
+				PersistenceSource: opensearchv1.PersistenceSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			}},
+		}
+		return cluster
+	}
+	manager := func(size string) corev1alpha1.ComponentSpec {
+		return corev1alpha1.ComponentSpec{Storage: &corev1alpha1.Storage{Size: resource.MustParse(size)}}
+	}
+
+	tests := []struct {
+		name     string
+		topology string
+		manager  *corev1alpha1.ComponentSpec
+		existing *opensearchv1.OpenSearchCluster
+		want     []string
+	}{
+		{name: "unchanged", topology: common.TopologyDedicated, manager: ptr.To(manager("5Gi")), existing: dedicatedCluster()},
+		{
+			name: "manager storage shrunk", topology: common.TopologyDedicated, manager: ptr.To(manager("2Gi")),
+			existing: dedicatedCluster(), want: []string{"spec.components[clusterManager].storage.size"},
+		},
+		{
+			name: "standard cluster switched to dedicated", topology: common.TopologyDedicated, manager: ptr.To(manager("5Gi")),
+			existing: existingCluster("", nil), want: []string{"spec.topology.type"},
+		},
+		{
+			name: "dedicated cluster switched to standard", existing: dedicatedCluster(),
+			want: []string{"spec.topology.type"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := testInstance(validEngine())
+			if tt.topology != "" {
+				in.Spec.Topology = &corev1alpha1.TopologySpec{Type: tt.topology}
+			}
+			if tt.manager != nil {
+				in.Spec.Components[common.ComponentClusterManager] = *tt.manager
+			}
+			c, _ := newTestContext(t, in, tt.existing)
+
+			errs, err := New().ValidateReferences(c)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, fieldsOf(errs), "errors: %v", errs)
+		})
+	}
 }

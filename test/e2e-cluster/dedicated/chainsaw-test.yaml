@@ -1,0 +1,126 @@
+---
+# End-to-end suite for the dedicated topology against the real OpenSearch
+# operator: each role runs in its own node pool, and the published
+# connection details reach the cluster through the client service with TLS
+# verified, with and without coordinators.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: e2e-cluster-dedicated
+spec:
+  description: |
+    A dedicated-topology Instance reaches Ready with one cluster manager, one
+    data node and one coordinating node, each with the right roles; the
+    client service serves TLS-verified requests before and after the
+    coordinators are removed.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters,services -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get pods -o wide
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 200
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=operator
+        tail: 200
+
+  steps:
+    - name: create-instance
+      try:
+        - script:
+            content: kubectl -n $NAMESPACE apply -f 10-create-instance.yaml
+            check:
+              ($error == null): true
+              (contains($stderr, 'single cluster manager')): true
+
+    - name: instance-ready
+      try:
+        - assert:
+            file: 20-assert.yaml
+            timeout: 12m
+
+    - name: roles-and-connection
+      try:
+        - apply:
+            file: ../lib/toolbox.yaml
+        - assert:
+            file: ../lib/toolbox-assert.yaml
+        # The connection secret points at <name>-client, so this also checks
+        # that the name is in the HTTP certificate.
+        - script:
+            content: kubectl -n $NAMESPACE get secret test-instance-conn -o jsonpath='{.data.host}' | base64 -d
+            check:
+              ($stdout): (join('', ['test-instance-client.', $namespace, '.svc']))
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET '/_cat/nodes?h=name,node.role&format=json'
+            check:
+              ($error == null): true
+              (json_parse($stdout)[?starts_with(name, 'test-instance-managers-')]."node.role" | [0]): m
+              (json_parse($stdout)[?starts_with(name, 'test-instance-data-')]."node.role" | [0]): di
+              (json_parse($stdout)[?starts_with(name, 'test-instance-coordinators-')]."node.role" | [0]): '-'
+        # Requests go to the coordinator, which stores nothing.
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET /_nodes/_local
+            check:
+              (values(json_parse($stdout).nodes)[0].roles): []
+
+    - name: remove-coordinators
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type json \
+                -p '[{"op":"remove","path":"/spec/components/coordinator"}]'
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpenSearchCluster
+              metadata:
+                name: test-instance
+              status:
+                availableNodes: 2
+        - error:
+            timeout: 5m
+            resource:
+              apiVersion: apps/v1
+              kind: StatefulSet
+              metadata:
+                name: test-instance-coordinators
+        # Same connection details, now served by the data node.
+        - script:
+            timeout: 2m
+            content: ../lib/opensearch.sh test-instance GET /_nodes/_local
+            check:
+              ($error == null): true
+              (values(json_parse($stdout).nodes)[0].roles): [data, ingest]
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-instance
+        - wait:
+            apiVersion: opensearch.org/v1
+            kind: OpenSearchCluster
+            name: test-instance
+            timeout: 2m
+            for:
+              deletion: {}
+        - error:
+            timeout: 3m
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                labels:
+                  opensearch.org/opensearch-cluster: test-instance

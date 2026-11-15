@@ -57,7 +57,7 @@ for what is planned next.
 
 | Capability | Status | Notes |
 |---|---|---|
-| Provisioning | ✅ | `standard` topology |
+| Provisioning | ✅ | `standard` and `dedicated` topologies; see [Topologies](#topologies) |
 | Horizontal scaling | ✅ | `spec.components.engine.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources`; the JVM heap is half the memory request |
 | Version upgrades | ✅ | `spec.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
@@ -71,8 +71,8 @@ Stateful workloads additionally report:
 
 | Capability | Status | Notes |
 |---|---|---|
-| Persistent storage | ✅ | `spec.components.engine.storage`; volumes are deleted with the Instance |
-| Storage expansion | ✅ | `spec.components.engine.storage.size`; rejected when the StorageClass does not allow expansion |
+| Persistent storage | ✅ | `spec.components.engine.storage` (and `clusterManager.storage` in `dedicated`); volumes are deleted with the Instance |
+| Storage expansion | ✅ | `spec.components.<component>.storage.size`; rejected when the StorageClass does not allow expansion |
 | Disruption budget | ✅ | A `PodDisruptionBudget` lets node drains evict one OpenSearch node at a time; see [Configuration](#configuration) |
 | Backups (on demand) | ✅ | S3-compatible storage, via the OpenSearch snapshot API; see [Configuration](#configuration) |
 | Backups (scheduled) | ✅ | `spec.backup.storages[].schedules[]`; see [Configuration](#configuration) |
@@ -150,7 +150,7 @@ kubectl get secret "$(kubectl get instance my-instance -o jsonpath='{.status.con
 ```
 
 The connection secret holds the HTTPS endpoint (`host`, `port`, `uri`) of the cluster's
-client service and the `admin` user's credentials. The HTTP certificate is signed by a CA the
+client service (`<instance>` or, in the `dedicated` topology, `<instance>-client`) and the `admin` user's credentials. The HTTP certificate is signed by a CA the
 operator generates per cluster (secret `<instance>-ca`).
 
 ## Topologies
@@ -162,7 +162,42 @@ operator generates per cluster (secret `<instance>-ca`).
 | Topology | Default | Description |
 |---|---|---|
 | `standard` | ✅ | One node pool (`engine`); every node is cluster-manager eligible, holds data and runs ingest pipelines. 3 nodes by default |
+| `dedicated` | | One node pool per role: `clusterManager` (3 by default), `engine` as data + ingest nodes (3 by default), and optional coordinating-only `coordinator` nodes (2 by default, no storage) |
 <!-- END GENERATED: topologies -->
+
+The topology is chosen at creation and cannot be changed afterwards. Choose `dedicated` for
+larger clusters: the cluster-manager quorum keeps working while data nodes are busy or
+restarting, and coordinators take request routing and result merging off the data nodes.
+
+```yaml
+spec:
+  topology:
+    type: dedicated
+  components:
+    clusterManager:
+      replicas: 3
+      resources: {limits: {cpu: "1", memory: 2Gi}}
+      storage: {size: 5Gi}
+    engine:
+      replicas: 3
+      resources: {limits: {cpu: "2", memory: 8Gi}}
+      storage: {size: 100Gi}
+    coordinator:  # optional
+      replicas: 2
+      resources: {limits: {cpu: "1", memory: 4Gi}}
+```
+
+In the `dedicated` topology:
+
+- `clusterManager.replicas` must be odd; a single cluster manager is allowed with a warning,
+  since the cluster stops accepting writes while it restarts.
+- Clients connect to the `<instance>-client` service, which is in the HTTP certificate. It
+  routes to the coordinators when there are any, else to the data nodes, so adding or
+  removing `coordinator` does not change the connection details. `engine.service` exposes
+  the same nodes.
+- Each OpenSearch component takes its own `parameters.configuration`, applied to its nodes
+  only.
+- Storage size and class rules apply to `clusterManager` and `engine` alike.
 
 ## Versions
 

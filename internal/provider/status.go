@@ -84,9 +84,14 @@ func withHost(details controller.ConnectionDetails, host string) controller.Conn
 }
 
 // connectionDetails builds the HTTPS endpoint of the cluster's client
-// service together with the admin credentials.
+// service together with the admin credentials. A dedicated cluster's client
+// service is the extra name in its HTTP certificate.
 func connectionDetails(cluster *opensearchv1.OpenSearchCluster, adminSecret *corev1.Secret) controller.ConnectionDetails {
 	host := fmt.Sprintf("%s.%s.svc", cluster.Spec.General.ServiceName, cluster.Namespace)
+	if sec := cluster.Spec.Security; sec != nil && sec.Tls != nil && sec.Tls.Http != nil &&
+		sec.Tls.Http.CustomFQDN != nil && *sec.Tls.Http.CustomFQDN != "" {
+		host = *sec.Tls.Http.CustomFQDN
+	}
 	port := cluster.Spec.General.HttpPort
 	if port == 0 {
 		port = httpPort

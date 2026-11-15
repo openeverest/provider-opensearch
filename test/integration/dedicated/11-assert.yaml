@@ -1,0 +1,15 @@
+# Clients connect through the client service, whose name is in the HTTP
+# certificate.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-instance-conn
+data:
+  (base64_decode(host)): (join('', ['test-instance-client.', $namespace, '.svc']))
