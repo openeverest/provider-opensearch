@@ -261,7 +261,7 @@ merged: it predates the OpenEverest provider monitoring contract (`MonitoringBin
 
 ## M7 — Production hardening
 
-- [ ] **Upgrade preflight** (`UpgradeProvider.CheckUpgrade`) — block provider/operator upgrades that would break running Instances
+- [x] **Upgrade preflight** (`UpgradeProvider.CheckUpgrade`) — pre-upgrade hook Job; blocks while a cluster is mid version upgrade or rolling restart, warns when it is not running or not green
 - [ ] **Maintenance gating** — route provider-induced rolling restarts (defaults change, operator bump) through `RequestMaintenance`
 - [x] PodDisruptionBudget per node pool (`maxUnavailable: 1`); `drainDataNodes` stays off (it blocks restarts of a yellow cluster and needs spare disk)
 - [ ] InstancePresets (small / medium / large)

@@ -108,6 +108,20 @@ helm upgrade provider-opensearch oci://ghcr.io/openeverest/charts/provider-opens
 helm uninstall provider-opensearch --namespace everest-system
 ```
 
+A `helm upgrade` first runs a preflight Job with the new provider image. It aborts the upgrade
+when an `OpenSearchCluster` is in the middle of a version upgrade or a rolling restart, or when
+the installed release is older than the new release's `minUpgradableFrom`. A cluster that is
+not running or not green only produces a warning. The report is in the Job's log, which Helm
+keeps when the hook fails:
+
+```bash
+kubectl logs -n everest-system job/provider-opensearch-preflight
+```
+
+A provider upgrade can itself restart the nodes one by one, when the new release changes how
+the cluster is rendered or bundles a newer operator. These restarts are not yet held for
+approval through `spec.maintenance`; upgrade the provider in a maintenance window.
+
 Uninstalling the chart does **not** delete running `Instance` resources or their data.
 
 ## Usage
@@ -232,6 +246,10 @@ Worth knowing:
   names from it.
 - **Storage class** — cannot be changed after creation. A size increase is rejected if the
   class's `allowVolumeExpansion` is not `true`.
+- **Rolling restarts** — changing the version, resources, custom configuration, or enabling
+  backups restarts the nodes one by one. Restarts the user asks for are applied right away;
+  `spec.maintenance` does not hold them. Scaling and Dashboards changes do
+  not restart the OpenSearch nodes.
 - **Version changes** — downgrades and upgrades that skip a major version are rejected; see
   [Versions](#versions).
 - **Custom configuration** — `spec.components.engine.parameters.configuration` takes an
@@ -375,6 +393,7 @@ kubectl logs -n everest-system deploy/provider-opensearch -f
 |---|---|
 | `Instance` stuck in `Creating` | `kubectl describe instance <name>` conditions, then the provider logs |
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
+| `helm upgrade` fails with `pre-upgrade hooks failed` | `kubectl logs -n everest-system job/provider-opensearch-preflight` names the blocking Instance; wait for its upgrade or restart to finish and retry |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `opensearch` |
 | Operator resource created but no pods | `kubectl get opensearchcluster <name> -o yaml` — the failure is upstream; check the operator logs |
 | `kubectl drain` waits on `Cannot evict pod as it would violate the pod's disruption budget` | Another OpenSearch node of the Instance is not ready yet; the drain continues once it is |
