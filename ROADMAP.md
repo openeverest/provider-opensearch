@@ -251,8 +251,9 @@ merged: it predates the OpenEverest provider monitoring contract (`MonitoringBin
 
 ## M6 — Security and access
 
-- [ ] **Bootstrap credentials** — `spec.userSecretRef` → `security.config.adminCredentialsSecret`
-- [ ] **Custom TLS** — user-provided certificates / cert-manager issuer instead of operator-generated ones; certificate rotation settings
+- [x] **Bootstrap credentials** — `spec.userSecretRef` → `security.config.adminCredentialsSecret` (copied once at creation)
+- [x] **Custom TLS** — user-provided HTTP certificate / cert-manager issuer instead of the operator-generated one; renewals are hot-reloaded
+- [ ] Custom transport certificate (node-to-node), if requested
 - [ ] **Users and roles** (optional) — expose `OpensearchUser` / `OpensearchRole` management via Instance-scoped `secrets` definitions, if OpenEverest core grows a user-management concept
 - [ ] Dashboards credentials and multi-tenancy defaults
 
