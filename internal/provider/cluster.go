@@ -114,7 +114,8 @@ func clientPodSelector(clusterName, topology string, components map[string]corev
 }
 
 // adminSecretName is the operator-generated secret with the admin user's
-// credentials (keys "username" and "password").
+// credentials (keys "username" and "password"), when spec.userSecretRef does
+// not seed them.
 func adminSecretName(clusterName string) string {
 	return clusterName + "-admin-password"
 }
@@ -141,6 +142,12 @@ type clusterInputs struct {
 	snapshotRepos  []opensearchv1.SnapshotRepoConfig
 	keystore       []opensearchv1.KeystoreValue
 	backupPlugins  []string
+	// customHTTP holds the security settings of a user-supplied HTTP
+	// certificate (see syncHTTPCertificate); nil when it is generated.
+	customHTTP *opensearchv1.Security
+	// adminCredentials names the Secret the admin user is seeded from; empty
+	// lets the operator generate one.
+	adminCredentials string
 }
 
 // buildClusterSpec maps the OpenSearch components of an Instance onto an
@@ -183,16 +190,32 @@ func buildClusterSpec(in clusterInputs) opensearchv1.ClusterSpec {
 		pools = append(pools, buildNodePool(in.name, def, component, in.configs[def.component]))
 	}
 
+	security := &opensearchv1.Security{
+		Tls: &opensearchv1.TlsConfig{
+			Transport: &opensearchv1.TlsConfigTransport{Generate: true, PerNode: true},
+			Http:      httpTLS,
+		},
+	}
+	if in.customHTTP != nil {
+		// The operator ignores customFQDN for a certificate it does not
+		// generate; it stays as the host connectionDetails publishes.
+		custom := *in.customHTTP.Tls.Http
+		custom.CustomFQDN = httpTLS.CustomFQDN
+		security.Tls.Http = &custom
+		security.Config = in.customHTTP.Config
+	}
+	if in.adminCredentials != "" {
+		if security.Config == nil {
+			security.Config = &opensearchv1.SecurityConfig{}
+		}
+		security.Config.AdminCredentialsSecret = corev1.LocalObjectReference{Name: in.adminCredentials}
+	}
+
 	return opensearchv1.ClusterSpec{
 		General: general,
 		// Sent explicitly: the CRD default does not apply to a serialized false.
-		ConfMgmt: opensearchv1.ConfMgmt{SmartScaler: true},
-		Security: &opensearchv1.Security{
-			Tls: &opensearchv1.TlsConfig{
-				Transport: &opensearchv1.TlsConfigTransport{Generate: true, PerNode: true},
-				Http:      httpTLS,
-			},
-		},
+		ConfMgmt:  opensearchv1.ConfMgmt{SmartScaler: true},
+		Security:  security,
 		NodePools: pools,
 	}
 }

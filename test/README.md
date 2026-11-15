@@ -28,6 +28,8 @@ test/
   vars.sh                      # Pinned operator/engine versions (sourced by make)
   testdata/
     seaweedfs.yaml             # In-cluster S3 (HTTP) for the e2e backup suite
+    ca-issuer.yaml             # Namespaced cert-manager CA Issuer "ca" for the TLS suites
+    certificate.sh             # Issues a certificate Secret standing in for a user-supplied one
   integration/
     .chainsaw.yaml             # Shared chainsaw configuration (timeouts, reports)
     core/                      # Core lifecycle suite (create/update/delete)
@@ -37,12 +39,14 @@ test/
     features/                  # Configuration, external access, Dashboards, upgrade, admission rejections
     backup/                    # Snapshot repositories, keystore, SM policies and retention
     dedicated/                 # Dedicated topology: per-role pools, client service, admission rules
+    tls/                       # Custom HTTP certificate (Secret or issuer), userSecretRef, InvalidReference holds
   e2e-cluster/
     .chainsaw.yaml             # Separate config: longer default timeouts
-    lib/                       # toolbox pod + opensearch.sh: TLS-verified REST calls via <name>-conn
+    lib/                       # toolbox pod + opensearch.sh: REST calls verified with <name>-conn's ca.crt
     core/                      # Real Ready, TLS-verified connection, scale 1 -> 3, delete removes PVCs
     backup/                    # Backup, in-place restore, new Instance from backup, schedule mirroring
     dedicated/                 # Per-role pools on the real operator, client service with and without coordinators
+    tls/                       # Custom certificates served for real, custom admin password, hot-reloaded renewal
 ```
 
 Each suite is a directory containing one `chainsaw-test.yaml` plus the
@@ -91,9 +95,11 @@ make test-integration        # all integration suites (deploy-provider-ci)
 make test-integration-core   # just the core integration suite
 make test-integration-features
 make test-integration-backup
+make test-integration-tls    # installs cert-manager (CERT_MANAGER_VERSION) first
 make test-e2e-cluster        # all e2e-cluster suites (deploy-provider-e2e)
 make test-e2e-cluster-core   # just the core e2e-cluster suite
 make test-e2e-cluster-backup # backup and restore; deploys SeaweedFS itself
+make test-e2e-cluster-tls    # installs cert-manager first
 ```
 
 ## Running in CI

@@ -17,6 +17,9 @@ func TestUISchemaIsReconciled(t *testing.T) {
 			// and TestBuildNodePoolAdditionalConfig.
 			"spec.components.engine.parameters.configuration":         "probe value is not valid YAML; see configuration_test.go",
 			"spec.components.clusterManager.parameters.configuration": "probe value is not valid YAML; see configuration_test.go",
+			// The kind only matters with an issuer name, which the harness
+			// probes separately. Covered by TestValidateReferencesSecurity.
+			"spec.parameters.tls.issuer.kind": "only applies together with spec.parameters.tls.issuer.name; see tls_test.go",
 		},
 	})
 }

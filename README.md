@@ -65,7 +65,8 @@ for what is planned next.
 | External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service; the certificate covers in-cluster names only |
 | Dashboards | ✅ | Optional `dashboards` component; see [Configuration](#configuration) |
 | Monitoring | ❌ | Planned on the OpenEverest monitoring contract (#14) |
-| TLS | ✅ | Operator-generated certificates for transport and HTTP, always on |
+| TLS | ✅ | Always on. The HTTP certificate is generated, or comes from a Secret or a cert-manager issuer (`spec.parameters.tls`); transport certificates are always generated. See [Configuration](#configuration) |
+| Custom credentials | ✅ | `spec.userSecretRef` seeds the `admin` password at creation; see [Configuration](#configuration) |
 
 Stateful workloads additionally report:
 
@@ -150,8 +151,9 @@ kubectl get secret "$(kubectl get instance my-instance -o jsonpath='{.status.con
 ```
 
 The connection secret holds the HTTPS endpoint (`host`, `port`, `uri`) of the cluster's
-client service (`<instance>` or, in the `dedicated` topology, `<instance>-client`) and the `admin` user's credentials. The HTTP certificate is signed by a CA the
-operator generates per cluster (secret `<instance>-ca`).
+client service (`<instance>` or, in the `dedicated` topology, `<instance>-client`), the `admin` user's credentials and
+`ca.crt`, the CA that verifies the endpoint. Unless [custom TLS](#configuration) is set, the HTTP certificate is signed by a CA
+the operator generates per cluster (secret `<instance>-ca`).
 
 ## Topologies
 
@@ -248,8 +250,30 @@ Worth knowing:
   Reverting to `ClusterIP` (or unsetting `service`) removes the `<name>-exposed` service.
   Once a `LoadBalancer` has an address, the connection secret publishes it as `host`. The
   operator-generated HTTP certificate only covers the in-cluster names, so external clients
-  must trust `<name>-ca` and skip hostname verification, or use their own certificates
-  (tracked in #15).
+  must trust `<name>-ca` and skip hostname verification, or the Instance must use a custom
+  certificate that also names the external address (see TLS below).
+- **Admin credentials** — set `spec.userSecretRef.name` to a Secret with a `password` key (and
+  optionally `username: admin`; the operator manages only the `admin` user) to choose the
+  admin password. It can only be set when the Instance is created. The provider copies the
+  password once into `<name>-admin-credentials`, so later edits to your Secret do not change
+  it. Without it the operator generates the password (`<name>-admin-password`).
+- **TLS** — connections are always encrypted. By default the operator generates the HTTP
+  (client) and transport certificates. To use your own HTTP certificate, set one of these
+  when the Instance is created; neither can be changed or removed afterwards:
+  - `spec.parameters.tls.certificateSecretName`: a Secret in the Instance namespace with
+    `tls.crt`, `tls.key` and `ca.crt`. The key must be PKCS#8 (`BEGIN PRIVATE KEY`), which
+    OpenSearch requires, and the certificate must be valid for the client host,
+    `<name>.<namespace>.svc` (or `<name>-client.<namespace>.svc` in `dedicated`), with
+    server auth usage, verifiable with `ca.crt`. The Instance stays `Pending` with the reason
+    until the Secret qualifies.
+  - `spec.parameters.tls.issuer` (`name`, `kind`: `Issuer` or `ClusterIssuer`): the provider
+    requests a cert-manager `Certificate`, `<name>-tls-http`, for the cluster's service names
+    with a PKCS#8 key. cert-manager must be installed.
+
+  Replacing the certificate in the Secret (or a cert-manager renewal) is picked up by the
+  nodes without a restart. Since the operator cannot sign its admin client certificate with
+  your CA, the provider keeps a CA of its own for it (`<name>-tls-admin-ca`,
+  `<name>-tls-admin`) and has the nodes trust both (`<name>-tls-http-ca`).
 - **Node drains** — every Instance gets a `PodDisruptionBudget`, `<name>-nodes-pdb`, with
   `maxUnavailable: 1`. Draining Kubernetes nodes (upgrades, autoscaler) therefore evicts one
   OpenSearch node at a time and a 3-node cluster keeps its cluster-manager quorum; a 1-node

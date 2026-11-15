@@ -117,6 +117,22 @@ spec:
               ($error != null): true
               (contains($stderr, 'spec.components[dashboards].version')): true
               (contains($stderr, 'must match the engine version 3.8.0')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"my-cert"}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.parameters.tls')): true
+              (contains($stderr, 'the certificate source cannot be changed after creation')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"userSecretRef":{"name":"my-credentials"}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.userSecretRef')): true
+              (contains($stderr, 'can only be set when the instance is created')): true
 
     - name: disable-dashboards
       try:

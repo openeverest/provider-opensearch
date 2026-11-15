@@ -1,0 +1,11 @@
+# Once its certificate exists, the held Instance goes ahead.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: missing-cert
+spec:
+  security:
+    tls:
+      http:
+        secret:
+          name: missing-cert-cert

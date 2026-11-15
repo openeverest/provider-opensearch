@@ -96,19 +96,34 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	tlsParams, err := instanceTLSParameters(in)
+	if err != nil {
+		return err
+	}
+	customHTTP, err := syncHTTPCertificate(c, tlsParams, topology)
+	if err != nil {
+		return err
+	}
+	adminCredentials, err := ensureAdminCredentials(c)
+	if err != nil {
+		return err
+	}
+
 	cluster := &opensearchv1.OpenSearchCluster{
 		ObjectMeta: c.ObjectMeta(c.Name()),
 		Spec: buildClusterSpec(clusterInputs{
-			name:          c.Name(),
-			namespace:     c.Namespace(),
-			topology:      topology,
-			components:    in.Spec.Components,
-			configs:       configs,
-			version:       version,
-			image:         image,
-			snapshotRepos: snapshotRepos,
-			keystore:      keystore,
-			backupPlugins: backupPlugins,
+			name:             c.Name(),
+			namespace:        c.Namespace(),
+			topology:         topology,
+			components:       in.Spec.Components,
+			configs:          configs,
+			version:          version,
+			image:            image,
+			snapshotRepos:    snapshotRepos,
+			keystore:         keystore,
+			backupPlugins:    backupPlugins,
+			customHTTP:       customHTTP,
+			adminCredentials: adminCredentials,
 		}),
 	}
 
@@ -208,12 +223,17 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	var details controller.ConnectionDetails
 	if cluster.Status.Initialized {
 		secret := &corev1.Secret{}
-		if err := c.Get(secret, adminSecretName(c.Name())); err != nil {
+		if err := c.Get(secret, adminCredentialsSecretName(c.Instance())); err != nil {
 			// Also returned for NotFound: an error requeues, while the secret's
 			// creation alone would not trigger another reconcile.
 			return controller.Status{}, fmt.Errorf("get admin credentials secret: %w", err)
 		}
-		details = connectionDetails(cluster, secret)
+		// The CA is published once it exists; a later Status adds it.
+		ca, err := clientCA(c)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return controller.Status{}, err
+		}
+		details = connectionDetails(cluster, secret, ca)
 		if host, err := externalHost(c); err != nil {
 			return controller.Status{}, err
 		} else if host != "" {

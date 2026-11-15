@@ -26,6 +26,9 @@ package provider
 // The operator's own service is always ClusterIP; the provider manages a separate
 // Service directly for LoadBalancer/NodePort access.
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// spec.parameters.tls.issuer: a cert-manager Certificate signed by the user's issuer.
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;clusterissuers,verbs=get;list;watch
 
 // =============================================================================
 // OPENEVEREST BACKUP RESOURCES

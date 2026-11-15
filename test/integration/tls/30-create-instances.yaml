@@ -1,0 +1,83 @@
+# Instances whose certificate or issuer cannot be used: the provider holds
+# them in Pending, with the reason on their Ready condition, until it can.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: wrong-name
+spec:
+  providerRef:
+    name: opensearch
+  parameters:
+    tls:
+      certificateSecretName: wrong-name-cert
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pkcs1-key
+spec:
+  providerRef:
+    name: opensearch
+  parameters:
+    tls:
+      certificateSecretName: pkcs1-key-cert
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: missing-cert
+spec:
+  providerRef:
+    name: opensearch
+  parameters:
+    tls:
+      certificateSecretName: missing-cert-cert
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: missing-issuer
+spec:
+  providerRef:
+    name: opensearch
+  parameters:
+    tls:
+      issuer:
+        kind: Issuer
+        name: no-such-issuer
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi

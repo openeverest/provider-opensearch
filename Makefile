@@ -41,6 +41,8 @@ OPENSEARCH_OPERATOR_REPO ?= https://opensearch-project.github.io/opensearch-k8s-
 OPENSEARCH_OPERATOR_CRDS ?= opensearchclusters opensearchusers opensearchroles opensearchactiongroups \
 	opensearchuserrolebindings opensearchtenants opensearchismpolicies opensearchsnapshotpolicies \
 	opensearchindextemplates opensearchcomponenttemplates
+# cert-manager release the TLS suites issue certificates with.
+CERT_MANAGER_VERSION ?= v1.19.1
 
 .PHONY: help
 help: ## Display this help.
@@ -145,7 +147,7 @@ helm-template: helm-deps ## Render Helm chart templates locally (dry-run).
 # Each suite is a directory under test/integration/ — see test/integration/README.md.
 
 .PHONY: test-integration
-test-integration: ## Run all integration tests against the current cluster.
+test-integration: install-cert-manager ## Run all integration tests against the current cluster (installs cert-manager).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration
 
 .PHONY: test-integration-core
@@ -164,8 +166,12 @@ test-integration-dedicated: ## Run the dedicated topology integration tests.
 test-integration-backup: ## Run the backup configuration integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup
 
+.PHONY: test-integration-tls
+test-integration-tls: install-cert-manager ## Run the custom credentials and TLS integration tests (installs cert-manager).
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/tls
+
 .PHONY: test-e2e-cluster
-test-e2e-cluster: ## Run all e2e-cluster tests (requires the real OpenSearch operator, see deploy-provider-e2e).
+test-e2e-cluster: install-cert-manager ## Run all e2e-cluster tests (installs cert-manager; requires the real OpenSearch operator, see deploy-provider-e2e).
 	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster
 
 .PHONY: test-e2e-cluster-core
@@ -179,6 +185,10 @@ test-e2e-cluster-dedicated: ## Run the dedicated topology e2e-cluster suite (req
 .PHONY: test-e2e-cluster-backup
 test-e2e-cluster-backup: ## Run the backup and restore e2e-cluster suite (requires the real OpenSearch operator, see deploy-provider-e2e).
 	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/backup
+
+.PHONY: test-e2e-cluster-tls
+test-e2e-cluster-tls: install-cert-manager ## Run the custom credentials and TLS e2e-cluster suite (installs cert-manager; requires the real OpenSearch operator).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/tls
 
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
@@ -196,6 +206,11 @@ install-crds: ## Install the OpenEverest CRDs of the core version pinned in go.m
 		curl -fsSL https://raw.githubusercontent.com/opensearch-project/opensearch-k8s-operator/opensearch-operator-$(OPENSEARCH_OPERATOR_VERSION)/charts/opensearch-operator/files/opensearch.org_$$crd.yaml \
 			| kubectl apply --server-side -f - || exit 1; \
 	done
+
+.PHONY: install-cert-manager
+install-cert-manager: ## Install cert-manager (CERT_MANAGER_VERSION) and wait for it to be ready.
+	kubectl apply --server-side --force-conflicts -f https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
+	kubectl -n cert-manager wait deployment --all --for=condition=Available --timeout 3m
 
 .PHONY: deploy-provider-ci
 deploy-provider-ci: helm-deps ## Deploy the provider via Helm for CI (IMG must already be imported into k3d).

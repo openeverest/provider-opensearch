@@ -1,0 +1,53 @@
+# tls-secret: the user's own HTTP certificate (certificate.sh) and admin
+# password. tls-issuer: an HTTP certificate cert-manager issues from the "ca"
+# Issuer, and the operator's generated admin password.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secret-credentials
+stringData:
+  password: custom-Passw0rd
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: tls-secret
+spec:
+  providerRef:
+    name: opensearch
+  userSecretRef:
+    name: tls-secret-credentials
+  parameters:
+    tls:
+      certificateSecretName: tls-secret-cert
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: tls-issuer
+spec:
+  providerRef:
+    name: opensearch
+  parameters:
+    tls:
+      issuer:
+        kind: Issuer
+        name: ca
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2Gi
+      storage:
+        size: 10Gi

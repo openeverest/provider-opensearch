@@ -74,8 +74,66 @@ spec:
           type: object
       type: opensearch
   defaultVersion: 3.8.0
+  parametersSchema:
+    openAPIV3Schema:
+      description: Parameters are the Instance-wide parameters (Instance.spec.parameters).
+      properties:
+        tls:
+          description: TLS configures the certificate clients connect to.
+          properties:
+            certificateSecretName:
+              description: |-
+                CertificateSecretName names a Secret in the instance namespace with
+                the HTTP certificate: tls.crt, tls.key and ca.crt. Its subject
+                alternative names must cover the instance's client Service.
+              type: string
+            issuer:
+              description: Issuer is the cert-manager issuer that signs the HTTP certificate.
+              properties:
+                kind:
+                  default: Issuer
+                  description: Kind of the issuer.
+                  type: string
+                name:
+                  description: Name of the issuer.
+                  type: string
+              type: object
+          type: object
+      type: object
   release:
     version: 0.1.0
+  secrets:
+    user:
+      parametersSchema:
+        openAPIV3Schema:
+          description: |-
+            UserSecretData holds the initial credentials of the OpenSearch admin user.
+            They are copied when the instance is created; later edits to the Secret do
+            not change the password.
+          properties:
+            password:
+              description: Password of the admin user.
+              type: string
+            username:
+              description: Username must be "admin", the user the operator manages. Optional.
+              type: string
+          required:
+            - password
+          type: object
+      uiSchema:
+        components:
+          password:
+            fieldParams:
+              label: Admin password
+              type: password
+            path: password
+            uiType: text
+            validation:
+              required: true
+        componentsOrder:
+          - password
+        description: Initial password of the OpenSearch admin user.
+        label: Admin credentials
   topologies:
     dedicated:
       components:
@@ -237,6 +295,17 @@ spec:
           label: Advanced configuration
         databaseVersion:
           components:
+            userSecret:
+              fieldParams:
+                definition: user
+                helperText: Leave empty to generate the admin password.
+                label: Admin credentials
+                modes:
+                  edit:
+                    helperText: Set when the database is created.
+                    readOnly: true
+              path: spec.userSecretRef.name
+              uiType: secret
             version:
               fieldParams:
                 label: OpenSearch Version
@@ -254,6 +323,9 @@ spec:
               uiType: select
               validation:
                 required: true
+          componentsOrder:
+            - version
+            - userSecret
           description: Provide the information about the OpenSearch version you want to use.
           label: Database Version
         resources:
@@ -439,9 +511,60 @@ spec:
             - coordinators
           description: Configure the cluster managers, data nodes and optional coordinating nodes of your OpenSearch cluster.
           label: Resources
+        tls:
+          components:
+            certificateSecretName:
+              fieldParams:
+                helperText: Secret with tls.crt, a PKCS#8 tls.key and ca.crt for the address clients connect to
+                label: Certificate secret
+                modes:
+                  edit:
+                    disabled: true
+              path: spec.parameters.tls.certificateSecretName
+              uiType: text
+              validation:
+                celExpressions:
+                  - celExpr: '!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '''' || !has(spec.parameters.tls.issuer.name) || spec.parameters.tls.issuer.name == '''''
+                    message: Use either a certificate secret or an issuer, not both
+            issuer:
+              components:
+                issuerKind:
+                  fieldParams:
+                    defaultValue: Issuer
+                    label: Issuer kind
+                    modes:
+                      edit:
+                        disabled: true
+                    options:
+                      - label: Issuer
+                        value: Issuer
+                      - label: ClusterIssuer
+                        value: ClusterIssuer
+                  path: spec.parameters.tls.issuer.kind
+                  uiType: select
+                issuerName:
+                  fieldParams:
+                    helperText: Issuer that signs the certificate
+                    label: cert-manager issuer
+                    modes:
+                      edit:
+                        disabled: true
+                  path: spec.parameters.tls.issuer.name
+                  uiType: text
+              componentsOrder:
+                - issuerName
+                - issuerKind
+              groupType: line
+              uiType: group
+          componentsOrder:
+            - certificateSecretName
+            - issuer
+          description: Connections are always encrypted. Leave empty to use a certificate generated for the instance.
+          label: TLS
       sectionsOrder:
         - databaseVersion
         - resources
+        - tls
         - advanced
     standard:
       sections:
@@ -492,6 +615,17 @@ spec:
           label: Advanced configuration
         databaseVersion:
           components:
+            userSecret:
+              fieldParams:
+                definition: user
+                helperText: Leave empty to generate the admin password.
+                label: Admin credentials
+                modes:
+                  edit:
+                    helperText: Set when the database is created.
+                    readOnly: true
+              path: spec.userSecretRef.name
+              uiType: secret
             version:
               fieldParams:
                 label: OpenSearch Version
@@ -509,6 +643,9 @@ spec:
               uiType: select
               validation:
                 required: true
+          componentsOrder:
+            - version
+            - userSecret
           description: Provide the information about the OpenSearch version you want to use.
           label: Database Version
         resources:
@@ -579,9 +716,60 @@ spec:
               uiType: group
           description: Configure the resources your OpenSearch cluster will have access to.
           label: Resources
+        tls:
+          components:
+            certificateSecretName:
+              fieldParams:
+                helperText: Secret with tls.crt, a PKCS#8 tls.key and ca.crt for the address clients connect to
+                label: Certificate secret
+                modes:
+                  edit:
+                    disabled: true
+              path: spec.parameters.tls.certificateSecretName
+              uiType: text
+              validation:
+                celExpressions:
+                  - celExpr: '!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '''' || !has(spec.parameters.tls.issuer.name) || spec.parameters.tls.issuer.name == '''''
+                    message: Use either a certificate secret or an issuer, not both
+            issuer:
+              components:
+                issuerKind:
+                  fieldParams:
+                    defaultValue: Issuer
+                    label: Issuer kind
+                    modes:
+                      edit:
+                        disabled: true
+                    options:
+                      - label: Issuer
+                        value: Issuer
+                      - label: ClusterIssuer
+                        value: ClusterIssuer
+                  path: spec.parameters.tls.issuer.kind
+                  uiType: select
+                issuerName:
+                  fieldParams:
+                    helperText: Issuer that signs the certificate
+                    label: cert-manager issuer
+                    modes:
+                      edit:
+                        disabled: true
+                  path: spec.parameters.tls.issuer.name
+                  uiType: text
+              componentsOrder:
+                - issuerName
+                - issuerKind
+              groupType: line
+              uiType: group
+          componentsOrder:
+            - certificateSecretName
+            - issuer
+          description: Connections are always encrypted. Leave empty to use a certificate generated for the instance.
+          label: TLS
       sectionsOrder:
         - databaseVersion
         - resources
+        - tls
         - advanced
   versions:
     - components:

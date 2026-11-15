@@ -112,7 +112,7 @@ func TestConnectionDetails(t *testing.T) {
 		"password": []byte("p@ss:w/rd!"),
 	}}
 
-	got := connectionDetails(testCluster(3, opensearchv1.ClusterStatus{}), secret)
+	got := connectionDetails(testCluster(3, opensearchv1.ClusterStatus{}), secret, nil)
 
 	assert.Equal(t, "opensearch", got.Type)
 	assert.Equal(t, "my-search.db.svc", got.Host)
@@ -134,7 +134,7 @@ func TestConnectionDetailsDedicated(t *testing.T) {
 		Http: &opensearchv1.TlsConfigHttp{CustomFQDN: ptr.To(clientServiceHost(testName, testNamespace))},
 	}}
 
-	got := connectionDetails(cluster, &corev1.Secret{})
+	got := connectionDetails(cluster, &corev1.Secret{}, nil)
 
 	assert.Equal(t, "my-search-client.db.svc", got.Host)
 }
