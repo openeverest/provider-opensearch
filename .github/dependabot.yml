@@ -1,0 +1,14 @@
+# The opensearch-operator is tracked as the bundled Helm subchart
+# (charts/provider-opensearch/Chart.yaml). Upstream tags are not Go-module
+# compatible, so the Go module is pinned to a commit and bumped by hand.
+version: 2
+
+updates:
+  - package-ecosystem: "helm"
+    directory: "/charts/provider-opensearch"
+    schedule:
+      interval: "daily"
+    allow:
+      - dependency-name: "opensearch-operator"
+    labels:
+      - "dependencies"
