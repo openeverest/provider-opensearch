@@ -226,9 +226,10 @@ In the `dedicated` topology:
 
 Source of truth: [definition/versions.yaml](definition/versions.yaml).
 
-Change `spec.version` on a running Instance to upgrade it; the operator performs a rolling
-upgrade and the Instance reports `Updating` until every node runs the new version. Admission
-rejects downgrades and upgrades that skip a major version.
+Change `spec.version` on a running Instance, or pick a newer version when editing it in the UI,
+to upgrade it. The operator performs a rolling upgrade and the Instance reports `Updating` until
+every node runs the new version; Dashboards moves to the same bundle. Admission rejects
+downgrades and upgrades that skip a major version.
 
 ## Configuration
 
@@ -305,7 +306,9 @@ Worth knowing:
   the same `OpenSearchCluster`. Supported fields: `replicas`, `resources`, and `service`
   (`serviceType`, `annotations`, `loadBalancerService.sourceRanges` — the operator supports a
   real service type for Dashboards, unlike the main engine). TLS is always generated, and the
-  version always matches the engine's (admission rejects a different one). Removing the
+  version always matches the engine's (admission rejects a different one). On a new Instance,
+  Dashboards starts once the cluster has initialized, so it never races the cluster's first
+  start. Removing the
   component removes the Dashboards deployment. There is
   no UI form field for it yet (API/CLI only), matching the only other optional-component
   precedent in the OpenEverest ecosystem. Credentials live in the

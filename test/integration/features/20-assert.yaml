@@ -1,4 +1,14 @@
-# The connection details point at the address the LoadBalancer was given.
+# The connection details point at the address the LoadBalancer was given,
+# and Dashboards is enabled now that the cluster is initialized.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  dashboards:
+    enable: true
+    version: 3.7.0
+---
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:

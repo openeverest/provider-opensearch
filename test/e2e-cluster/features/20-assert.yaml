@@ -1,0 +1,24 @@
+# The real operator's own status, on the older bundle.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+status:
+  phase: RUNNING
+  health: green
+  availableNodes: 3
+  version: 3.7.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-instance-dashboards
+status:
+  readyReplicas: 1
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready

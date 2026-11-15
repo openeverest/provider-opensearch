@@ -1,0 +1,26 @@
+# Dashboards runs the new bundle and the Instance is back to Ready, which it
+# reports only once every node runs the new version. The operator sets the
+# OpenSearchCluster's status.version to the target as soon as the upgrade
+# starts, so it proves nothing here; the suite checks the nodes' versions
+# through the REST API instead.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-instance-dashboards
+spec:
+  template:
+    spec:
+      containers:
+        - name: dashboards
+          image: opensearchproject/opensearch-dashboards:3.8.0
+status:
+  readyReplicas: 1
+  updatedReplicas: 1
+  (unavailableReplicas == null || unavailableReplicas == `0`): true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready

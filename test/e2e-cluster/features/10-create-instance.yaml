@@ -1,0 +1,25 @@
+# Three nodes on the older bundle, so the upgrade is a real rolling upgrade
+# that has to keep the cluster healthy, with Dashboards on the same bundle.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+spec:
+  providerRef:
+    name: opensearch
+  version: "3.7.0"
+  components:
+    engine:
+      replicas: 3
+      resources:
+        limits:
+          cpu: "500m"
+          memory: 2Gi
+      storage:
+        size: 5Gi
+    dashboards:
+      replicas: 1
+      resources:
+        limits:
+          cpu: 500m
+          memory: 1Gi

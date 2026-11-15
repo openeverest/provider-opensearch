@@ -190,6 +190,10 @@ test-e2e-cluster-backup: ## Run the backup and restore e2e-cluster suite (requir
 test-e2e-cluster-tls: install-cert-manager ## Run the custom credentials and TLS e2e-cluster suite (installs cert-manager; requires the real OpenSearch operator).
 	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/tls
 
+.PHONY: test-e2e-cluster-features
+test-e2e-cluster-features: ## Run the version upgrade and Dashboards e2e-cluster suite (requires the real OpenSearch operator, see deploy-provider-e2e).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/features
+
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
 	k3d image import ${IMG} -c ${K3D_CLUSTER_NAME}

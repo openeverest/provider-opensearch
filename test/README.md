@@ -42,11 +42,12 @@ test/
     tls/                       # Custom HTTP certificate (Secret or issuer), userSecretRef, InvalidReference holds
   e2e-cluster/
     .chainsaw.yaml             # Separate config: longer default timeouts
-    lib/                       # toolbox pod + opensearch.sh: REST calls verified with <name>-conn's ca.crt
+    lib/                       # toolbox pod + opensearch.sh/dashboards.sh: calls verified with <name>-conn's ca.crt
     core/                      # Real Ready, TLS-verified connection, scale 1 -> 3, delete removes PVCs
     backup/                    # Backup, in-place restore, new Instance from backup, schedule mirroring
     dedicated/                 # Per-role pools on the real operator, client service with and without coordinators
     tls/                       # Custom certificates served for real, custom admin password, hot-reloaded renewal
+    features/                  # Rolling 3.7.0 -> 3.8.0 upgrade keeping data, Dashboards over verified TLS, Dashboards off
 ```
 
 Each suite is a directory containing one `chainsaw-test.yaml` plus the
