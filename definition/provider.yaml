@@ -4,6 +4,10 @@
 
 name: opensearch
 
+# Instance-wide parameters (Instance.spec.parameters), a Go type in
+# definition/types.go.
+parametersSchema: Parameters
+
 # engine: OpenSearch nodes. In the standard topology every node is
 # cluster-manager eligible and holds data; in the dedicated topology these are
 # the data nodes.

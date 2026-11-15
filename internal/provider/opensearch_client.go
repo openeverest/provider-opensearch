@@ -34,22 +34,21 @@ type openSearchClient struct {
 	password string
 }
 
-// newOpenSearchClient builds a client for the cluster's REST API using the
-// operator-generated admin credentials and CA certificate.
+// newOpenSearchClient builds a client for the cluster's REST API with the
+// admin credentials, verifying the host clients connect to with their CA.
 func newOpenSearchClient(c *controller.Context) (*openSearchClient, error) {
 	adminSecret := &corev1.Secret{}
-	if err := c.Get(adminSecret, adminSecretName(c.Name())); err != nil {
+	if err := c.Get(adminSecret, adminCredentialsSecretName(c.Instance())); err != nil {
 		return nil, fmt.Errorf("get admin credentials secret: %w", err)
 	}
 
-	caSecret := &corev1.Secret{}
-	if err := c.Get(caSecret, caSecretName(c.Name())); err != nil {
-		return nil, fmt.Errorf("get CA secret: %w", err)
+	caCert, err := clientCA(c)
+	if err != nil {
+		return nil, err
 	}
-	caCert := caSecret.Data["ca.crt"]
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("CA secret %q: ca.crt does not contain a valid certificate", caSecretName(c.Name()))
+		return nil, errors.New("the CA secret does not contain a valid certificate")
 	}
 
 	return &openSearchClient{
@@ -59,7 +58,7 @@ func newOpenSearchClient(c *controller.Context) (*openSearchClient, error) {
 				TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 			},
 		},
-		baseURL:  fmt.Sprintf("https://%s.%s.svc:%d", c.Name(), c.Namespace(), httpPort),
+		baseURL:  fmt.Sprintf("https://%s:%d", clientHost(c.Name(), c.Namespace(), topologyOf(c.Instance())), httpPort),
 		username: string(adminSecret.Data["username"]),
 		password: string(adminSecret.Data["password"]),
 	}, nil

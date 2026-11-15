@@ -98,6 +98,8 @@ func (p *Provider) Validate(in controller.ValidationInput) controller.Validation
 	}
 
 	errs = append(errs, validateBackupSchedules(inst.Spec.Backup)...)
+	errs = append(errs, validateTLS(inst, in.Old)...)
+	errs = append(errs, validateUserSecretRef(inst, in.Old)...)
 
 	if in.Provider != nil {
 		spec := &in.Provider.Spec
@@ -299,6 +301,16 @@ func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, e
 	if err != nil {
 		return nil, err
 	}
+	userErrs, err := validateUserSecret(c)
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, userErrs...)
+	tlsErrs, err := validateTLSReferences(c)
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, tlsErrs...)
 
 	existing := &opensearchv1.OpenSearchCluster{}
 	if err := c.Get(existing, c.Name()); err != nil {
@@ -314,6 +326,11 @@ func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, e
 	}
 	requested := resolveComponentVersion(spec, c.Instance(), common.ComponentEngine, common.ComponentTypeOpensearch)
 	errs = append(errs, validateVersionChange(existing.Status.Version, requested)...)
+	securityErrs, err := validateSecurityMatches(existing, c.Instance())
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, securityErrs...)
 
 	topology := topologyOf(c.Instance())
 	if errs := validateTopologyMatches(existing, topology); len(errs) > 0 {

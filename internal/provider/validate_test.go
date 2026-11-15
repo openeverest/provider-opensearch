@@ -57,6 +57,11 @@ func TestValidate(t *testing.T) {
 		{fixture: "invalid-schedule-name.yaml", want: []string{"spec.backup.storages[0].schedules[0].name"}},
 		{fixture: "standard-explicit.yaml"},
 		{fixture: "standard-with-manager.yaml", want: []string{"spec.components[clusterManager]"}},
+		{fixture: "tls-secret.yaml"},
+		{fixture: "tls-issuer.yaml"},
+		{fixture: "tls-both.yaml", want: []string{"spec.parameters.tls.issuer"}},
+		{fixture: "tls-bad-kind.yaml", want: []string{"spec.parameters.tls.issuer.kind"}},
+		{fixture: "user-secret.yaml"},
 
 		// Dedicated topology.
 		{fixture: "dedicated.yaml"},
@@ -83,6 +88,12 @@ func TestValidate(t *testing.T) {
 		{fixture: "dedicated.yaml", old: "dedicated-coordinators.yaml"},
 		{fixture: "dedicated-manager-storage-20gi.yaml", old: "dedicated.yaml"},
 		{fixture: "dedicated.yaml", old: "dedicated-manager-storage-20gi.yaml", want: []string{"spec.components[clusterManager].storage.size"}},
+		{fixture: "tls-secret.yaml", old: "tls-secret.yaml"},
+		{fixture: "tls-secret.yaml", old: "minimal.yaml", want: []string{"spec.parameters.tls"}},
+		{fixture: "minimal.yaml", old: "tls-issuer.yaml", want: []string{"spec.parameters.tls"}},
+		{fixture: "tls-issuer.yaml", old: "tls-secret.yaml", want: []string{"spec.parameters.tls"}},
+		{fixture: "user-secret.yaml", old: "user-secret.yaml"},
+		{fixture: "user-secret.yaml", old: "minimal.yaml", want: []string{"spec.userSecretRef"}},
 	}
 
 	for _, tt := range tests {
