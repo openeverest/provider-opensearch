@@ -62,9 +62,9 @@ spec:
             content: ../lib/opensearch.sh test-instance GET '/_cat/nodes?h=name,node.role&format=json'
             check:
               ($error == null): true
-              (json_parse($stdout)[?starts_with(name, 'test-instance-managers-')].["node.role"] | [0]): m
-              (json_parse($stdout)[?starts_with(name, 'test-instance-data-')].["node.role"] | [0]): di
-              (json_parse($stdout)[?starts_with(name, 'test-instance-coordinators-')].["node.role"] | [0]): '-'
+              (json_parse($stdout)[?starts_with(name, 'test-instance-managers-')]."node.role" | [0]): m
+              (json_parse($stdout)[?starts_with(name, 'test-instance-data-')]."node.role" | [0]): di
+              (json_parse($stdout)[?starts_with(name, 'test-instance-coordinators-')]."node.role" | [0]): '-'
         # Requests go to the coordinator, which stores nothing.
         - script:
             timeout: 2m
