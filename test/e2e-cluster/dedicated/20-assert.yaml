@@ -1,0 +1,17 @@
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+status:
+  phase: RUNNING
+  initialized: true
+  availableNodes: 3
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Ready
+  connectionSecretRef:
+    name: test-instance-conn

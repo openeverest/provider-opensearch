@@ -224,11 +224,11 @@ the provider drives snapshots itself through the OpenSearch REST API.
 
 For larger / production clusters: separate cluster-manager quorum from data nodes.
 
-- [ ] Topology `dedicated`: `clusterManager` (3 replicas, small disk), `engine` (data + ingest), optional `coordinator` (no roles, no disk, client-facing service)
-- [ ] One `nodePools[]` entry per component; main service points to coordinators when present
-- [ ] Validation: odd `clusterManager` replicas (`>= 3` recommended); `coordinator` has no storage
-- [ ] Topology switching (`standard` ↔ `dedicated`) on a live Instance: define whether it is supported or rejected
-- [ ] UI schema with component groups per role; Chainsaw `core/dedicated` suite
+- [x] Topology `dedicated`: `clusterManager` (3 replicas, small disk), `engine` (data + ingest), optional `coordinator` (no roles, no disk, client-facing service)
+- [x] One `nodePools[]` entry per component; a `<name>-client` service (in the HTTP certificate) points to coordinators when present, else data nodes
+- [x] Validation: odd `clusterManager` replicas (warning at 1); `coordinator` has no storage
+- [x] Topology switching (`standard` ↔ `dedicated`) on a live Instance: rejected
+- [x] UI schema with component groups per role (coordinators toggleable); Chainsaw `integration/dedicated` suite
 
 ---
 

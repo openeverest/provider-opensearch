@@ -34,7 +34,7 @@ func exposedServiceName(instanceName string) string {
 // syncExposedService creates or updates the provider-managed exposed Service
 // when engine.Service asks for LoadBalancer or NodePort access, and removes
 // it otherwise (e.g. the user reverted to the default ClusterIP).
-func syncExposedService(c *controller.Context, engine corev1alpha1.ComponentSpec) error {
+func syncExposedService(c *controller.Context, engine corev1alpha1.ComponentSpec, selector map[string]string) error {
 	svc := engine.Service
 	if svc == nil || svc.ServiceType == "" || svc.ServiceType == corev1.ServiceTypeClusterIP {
 		return deleteExposedService(c)
@@ -56,7 +56,7 @@ func syncExposedService(c *controller.Context, engine corev1alpha1.ComponentSpec
 				Port:       httpPort,
 				TargetPort: intstr.FromInt32(httpPort),
 			}},
-			Selector: map[string]string{clusterLabel: c.Name()},
+			Selector: selector,
 		},
 	}
 
@@ -71,6 +71,26 @@ func syncExposedService(c *controller.Context, engine corev1alpha1.ComponentSpec
 	// is enough for Kubernetes to garbage-collect this on Instance deletion;
 	// Cleanup does not need to handle it.
 	return c.Apply(exposed)
+}
+
+// syncClientService creates or updates the ClusterIP Service in front of the
+// pods that serve client requests in a dedicated topology. Its selector
+// follows the coordinator component being added or removed, while its name,
+// and so the connection details, stay the same.
+func syncClientService(c *controller.Context, selector map[string]string) error {
+	return c.Apply(&corev1.Service{
+		ObjectMeta: c.ObjectMeta(clientServiceName(c.Name())),
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeClusterIP,
+			Ports: []corev1.ServicePort{{
+				Name:       "http",
+				Protocol:   corev1.ProtocolTCP,
+				Port:       httpPort,
+				TargetPort: intstr.FromInt32(httpPort),
+			}},
+			Selector: selector,
+		},
+	})
 }
 
 // externalHost returns the address the LoadBalancer assigned to the exposed

@@ -36,11 +36,13 @@ test/
       ...
     features/                  # Configuration, external access, Dashboards, upgrade, admission rejections
     backup/                    # Snapshot repositories, keystore, SM policies and retention
+    dedicated/                 # Dedicated topology: per-role pools, client service, admission rules
   e2e-cluster/
     .chainsaw.yaml             # Separate config: longer default timeouts
     lib/                       # toolbox pod + opensearch.sh: TLS-verified REST calls via <name>-conn
     core/                      # Real Ready, TLS-verified connection, scale 1 -> 3, delete removes PVCs
     backup/                    # Backup, in-place restore, new Instance from backup, schedule mirroring
+    dedicated/                 # Per-role pools on the real operator, client service with and without coordinators
 ```
 
 Each suite is a directory containing one `chainsaw-test.yaml` plus the

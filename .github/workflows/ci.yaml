@@ -116,6 +116,15 @@ jobs:
       suite: features
     secrets: inherit
 
+  test-integration-dedicated:
+    name: Integration / dedicated
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-dedicated
+      suite: dedicated
+    secrets: inherit
+
   test-integration-backup:
     name: Integration / backup
     needs: [lint, build, verify]
@@ -138,6 +147,15 @@ jobs:
     with:
       make_target: test-e2e-cluster-core
       suite: core
+    secrets: inherit
+
+  test-e2e-cluster-dedicated:
+    name: E2E Cluster / dedicated
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-dedicated
+      suite: dedicated
     secrets: inherit
 
   test-e2e-cluster-backup:

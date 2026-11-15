@@ -69,16 +69,26 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	in := c.Instance()
+	topology := topologyOf(in)
+	engine := in.Spec.Components[common.ComponentEngine]
 	version := resolveVersion(spec, engine, common.ComponentTypeOpensearch)
 	image := engine.Image
 	if image == "" {
 		image = controller.GetImageForVersion(spec, common.ComponentEngine, version)
 	}
 
-	additionalConfig, err := resolveAdditionalConfig(engine)
-	if err != nil {
-		return fmt.Errorf("%s: configuration: %w", common.ComponentEngine, err)
+	configs := map[string]map[string]string{}
+	for _, def := range nodePoolDefs(topology) {
+		component, ok := in.Spec.Components[def.component]
+		if !ok {
+			continue
+		}
+		config, err := resolveAdditionalConfig(component)
+		if err != nil {
+			return fmt.Errorf("%s: configuration: %w", def.component, err)
+		}
+		configs[def.component] = config
 	}
 
 	snapshotRepos, keystore, backupPlugins, err := buildBackupConfig(c)
@@ -88,7 +98,18 @@ func (p *Provider) Sync(c *controller.Context) error {
 
 	cluster := &opensearchv1.OpenSearchCluster{
 		ObjectMeta: c.ObjectMeta(c.Name()),
-		Spec:       buildClusterSpec(c.Name(), engine, version, image, additionalConfig, snapshotRepos, keystore, backupPlugins),
+		Spec: buildClusterSpec(clusterInputs{
+			name:          c.Name(),
+			namespace:     c.Namespace(),
+			topology:      topology,
+			components:    in.Spec.Components,
+			configs:       configs,
+			version:       version,
+			image:         image,
+			snapshotRepos: snapshotRepos,
+			keystore:      keystore,
+			backupPlugins: backupPlugins,
+		}),
 	}
 
 	// Apply replaces metadata wholesale; keep the operator's finalizer so it
@@ -116,7 +137,13 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	if err := syncExposedService(c, engine); err != nil {
+	selector := clientPodSelector(c.Name(), topology, in.Spec.Components)
+	if topology == common.TopologyDedicated {
+		if err := syncClientService(c, selector); err != nil {
+			return err
+		}
+	}
+	if err := syncExposedService(c, engine, selector); err != nil {
 		return err
 	}
 

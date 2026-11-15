@@ -1,0 +1,98 @@
+---
+# Dedicated topology suite: separate cluster-manager, data and coordinating
+# node pools, the client service, and the topology's admission rules.
+#
+# The OpenSearch operator is not installed (see deploy-provider-ci), so the
+# suite simulates it like the core suite does.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: dedicated
+spec:
+  description: |
+    Lifecycle of a dedicated-topology Instance: per-role node pools, the
+    client service following the coordinators, and the rules that keep the
+    topology and the cluster-manager quorum safe.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters,services -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 100
+
+  steps:
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    - name: instance-ready
+      try:
+        - script:
+            content: |
+              set -e
+              kubectl -n $NAMESPACE create secret generic test-instance-admin-password \
+                --from-literal=username=admin --from-literal=password=test-password
+              kubectl -n $NAMESPACE patch opensearchcluster/test-instance --subresource status --type merge \
+                -p '{"status":{"phase":"RUNNING","initialized":true,"health":"green","availableNodes":7,"componentsStatus":[]}}'
+        - assert:
+            file: 11-assert.yaml
+
+    - name: admission-rejects-unsafe-changes
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"components":{"clusterManager":{"replicas":2}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.components[clusterManager].replicas')): true
+              (contains($stderr, 'must be odd')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type json -p '[
+                {"op":"replace","path":"/spec/topology/type","value":"standard"},
+                {"op":"remove","path":"/spec/components/clusterManager"},
+                {"op":"remove","path":"/spec/components/coordinator"}]'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.topology.type')): true
+              (contains($stderr, 'cannot be changed after creation')): true
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p '{"spec":{"components":{"clusterManager":{"storage":{"size":"2Gi"}}}}}'
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.components[clusterManager].storage.size')): true
+              (contains($stderr, 'cannot be decreased from 5Gi to 2Gi')): true
+
+    - name: remove-coordinators
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch instance test-instance --type json \
+                -p '[{"op":"remove","path":"/spec/components/coordinator"}]'
+        - assert:
+            file: 20-assert.yaml
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-instance
+        - wait:
+            apiVersion: opensearch.org/v1
+            kind: OpenSearchCluster
+            name: test-instance
+            timeout: 1m
+            for:
+              deletion: {}

@@ -121,7 +121,11 @@ func TestBuildClusterSpec(t *testing.T) {
 	engine := validEngine()
 	engine.Storage.StorageClass = ptr.To("fast")
 
-	spec := buildClusterSpec(testName, engine, "3.8.0", "opensearchproject/opensearch:3.8.0", nil, nil, nil, nil)
+	spec := buildClusterSpec(clusterInputs{
+		name: testName, namespace: testNamespace, topology: common.TopologyStandard,
+		components: map[string]corev1alpha1.ComponentSpec{common.ComponentEngine: engine},
+		version:    "3.8.0", image: "opensearchproject/opensearch:3.8.0",
+	})
 
 	assert.Equal(t, "3.8.0", spec.General.Version)
 	assert.Equal(t, testName, spec.General.ServiceName)
@@ -142,7 +146,8 @@ func TestBuildClusterSpec(t *testing.T) {
 	assert.Equal(t, resource.MustParse("10Gi"), pool.DiskSize)
 	require.NotNil(t, pool.Persistence.PVC)
 	assert.Equal(t, ptr.To("fast"), pool.Persistence.PVC.StorageClassName)
-	assert.Equal(t, defaultAffinity(testName), pool.Affinity)
+	assert.Equal(t, defaultAffinity(testName, nodePoolName), pool.Affinity)
+	assert.Nil(t, spec.Security.Tls.Http.CustomFQDN)
 
 	require.NotNil(t, pool.Pdb)
 	assert.True(t, pool.Pdb.Enable)
@@ -152,7 +157,7 @@ func TestBuildClusterSpec(t *testing.T) {
 }
 
 func TestBuildClusterSpecDefaults(t *testing.T) {
-	spec := buildClusterSpec(testName, corev1alpha1.ComponentSpec{}, "3.8.0", "", nil, nil, nil, nil)
+	spec := buildClusterSpec(clusterInputs{name: testName, topology: common.TopologyStandard, version: "3.8.0"})
 
 	assert.Nil(t, spec.General.ImageSpec, "an empty image lets the operator derive it from the version")
 	assert.Equal(t, defaultReplicas, spec.NodePools[0].Replicas)
@@ -162,7 +167,7 @@ func TestBuildClusterSpecDefaults(t *testing.T) {
 func TestBuildNodePoolAdditionalConfig(t *testing.T) {
 	config := map[string]string{"cluster.routing.allocation.disk.threshold_enabled": "false"}
 
-	pool := buildNodePool(testName, validEngine(), config)
+	pool := buildNodePool(testName, standardPools[0], validEngine(), config)
 
 	assert.Equal(t, config, pool.AdditionalConfig)
 }
@@ -179,7 +184,7 @@ func TestBuildNodePoolSchedulingPolicy(t *testing.T) {
 		},
 	}
 
-	pool := buildNodePool(testName, engine, nil)
+	pool := buildNodePool(testName, standardPools[0], engine, nil)
 
 	assert.Same(t, affinity, pool.Affinity)
 	assert.Equal(t, map[string]string{"disk": "ssd"}, pool.NodeSelector)
@@ -436,4 +441,80 @@ func TestCleanup(t *testing.T) {
 		require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(admin), &corev1.Secret{}),
 			"secrets must survive until the cluster is gone")
 	})
+}
+
+func dedicatedComponents(withCoordinator bool) map[string]corev1alpha1.ComponentSpec {
+	manager := validEngine()
+	manager.Storage = &corev1alpha1.Storage{Size: resource.MustParse("5Gi"), StorageClass: ptr.To("fast")}
+	components := map[string]corev1alpha1.ComponentSpec{
+		common.ComponentEngine:         validEngine(),
+		common.ComponentClusterManager: manager,
+	}
+	if withCoordinator {
+		components[common.ComponentCoordinator] = corev1alpha1.ComponentSpec{Replicas: ptr.To[int32](4)}
+	}
+	return components
+}
+
+func TestBuildClusterSpecDedicated(t *testing.T) {
+	spec := buildClusterSpec(clusterInputs{
+		name: testName, namespace: testNamespace, topology: common.TopologyDedicated,
+		components: dedicatedComponents(true),
+		configs: map[string]map[string]string{
+			common.ComponentClusterManager: {"cluster.routing.allocation.awareness.attributes": "zone"},
+		},
+		version: "3.8.0",
+	})
+
+	require.NotNil(t, spec.Security.Tls.Http.CustomFQDN)
+	assert.Equal(t, "my-search-client.db.svc", *spec.Security.Tls.Http.CustomFQDN,
+		"the client service must be in the HTTP certificate from creation on")
+
+	require.Len(t, spec.NodePools, 3)
+	managers, data, coordinators := spec.NodePools[0], spec.NodePools[1], spec.NodePools[2]
+
+	assert.Equal(t, managerPoolName, managers.Component)
+	assert.Equal(t, []string{"cluster_manager"}, managers.Roles)
+	assert.Equal(t, resource.MustParse("5Gi"), managers.DiskSize)
+	assert.Equal(t, ptr.To("fast"), managers.Persistence.PVC.StorageClassName)
+	assert.Equal(t, map[string]string{"cluster.routing.allocation.awareness.attributes": "zone"}, managers.AdditionalConfig)
+
+	assert.Equal(t, dataPoolName, data.Component)
+	assert.Equal(t, []string{"data", "ingest"}, data.Roles)
+	assert.Nil(t, data.AdditionalConfig, "each component's configuration goes to its own pool only")
+
+	assert.Equal(t, coordinatorPoolName, coordinators.Component)
+	require.NotNil(t, coordinators.Roles, "the CRD requires roles; an empty list makes a coordinating-only node")
+	assert.Empty(t, coordinators.Roles)
+	assert.Equal(t, int32(4), coordinators.Replicas)
+	assert.True(t, coordinators.DiskSize.IsZero())
+	assert.Nil(t, coordinators.Persistence.PVC)
+	assert.NotNil(t, coordinators.Persistence.EmptyDir)
+
+	for _, pool := range spec.NodePools {
+		assert.NotNil(t, pool.Pdb, pool.Component)
+		assert.Equal(t, defaultAffinity(testName, pool.Component), pool.Affinity, pool.Component)
+	}
+}
+
+func TestBuildClusterSpecDedicatedWithoutCoordinators(t *testing.T) {
+	spec := buildClusterSpec(clusterInputs{
+		name: testName, namespace: testNamespace, topology: common.TopologyDedicated,
+		components: dedicatedComponents(false), version: "3.8.0",
+	})
+
+	var pools []string
+	for _, pool := range spec.NodePools {
+		pools = append(pools, pool.Component)
+	}
+	assert.Equal(t, []string{managerPoolName, dataPoolName}, pools)
+}
+
+func TestClientPodSelector(t *testing.T) {
+	assert.Equal(t, map[string]string{clusterLabel: testName},
+		clientPodSelector(testName, common.TopologyStandard, nil))
+	assert.Equal(t, map[string]string{clusterLabel: testName, nodePoolLabel: dataPoolName},
+		clientPodSelector(testName, common.TopologyDedicated, dedicatedComponents(false)))
+	assert.Equal(t, map[string]string{clusterLabel: testName, nodePoolLabel: coordinatorPoolName},
+		clientPodSelector(testName, common.TopologyDedicated, dedicatedComponents(true)))
 }
