@@ -73,6 +73,7 @@ Stateful workloads additionally report:
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage`; volumes are deleted with the Instance |
 | Storage expansion | ✅ | `spec.components.engine.storage.size`; rejected when the StorageClass does not allow expansion |
+| Disruption budget | ✅ | A `PodDisruptionBudget` lets node drains evict one OpenSearch node at a time; see [Configuration](#configuration) |
 | Backups (on demand) | ✅ | S3-compatible storage, via the OpenSearch snapshot API; see [Configuration](#configuration) |
 | Backups (scheduled) | ✅ | `spec.backup.storages[].schedules[]`; see [Configuration](#configuration) |
 | Restore | ✅ | In place, or seeding a new Instance via `spec.dataSource`; see [Configuration](#configuration) |
@@ -214,6 +215,15 @@ Worth knowing:
   operator-generated HTTP certificate only covers the in-cluster names, so external clients
   must trust `<name>-ca` and skip hostname verification, or use their own certificates
   (tracked in #15).
+- **Node drains** — every Instance gets a `PodDisruptionBudget`, `<name>-nodes-pdb`, with
+  `maxUnavailable: 1`. Draining Kubernetes nodes (upgrades, autoscaler) therefore evicts one
+  OpenSearch node at a time and a 3-node cluster keeps its cluster-manager quorum; a 1-node
+  Instance can still be drained, with downtime. The budget counts ready pods, and a pod is
+  ready once its node answers, before its shards have recovered: drain one node at a time and
+  wait for green health in between. The operator's own rolling restarts and upgrades are not
+  limited by it. They restart one node at a time with shard allocation limited to primaries
+  (`general.drainDataNodes` stays off: moving every shard off a node before each restart would
+  block restarts of a yellow cluster and need spare disk).
 - **Dashboards** — an optional `dashboards` component deploys OpenSearch Dashboards as part of
   the same `OpenSearchCluster`. Supported fields: `replicas`, `resources`, and `service`
   (`serviceType`, `annotations`, `loadBalancerService.sourceRanges` — the operator supports a
@@ -308,6 +318,7 @@ kubectl logs -n everest-system deploy/provider-opensearch -f
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `opensearch` |
 | Operator resource created but no pods | `kubectl get opensearchcluster <name> -o yaml` — the failure is upstream; check the operator logs |
+| `kubectl drain` waits on `Cannot evict pod as it would violate the pod's disruption budget` | Another OpenSearch node of the Instance is not ready yet; the drain continues once it is |
 | Pods crash with `max virtual memory areas vm.max_map_count` | The operator sets it through a privileged init container; the cluster's pod security settings must allow it |
 
 ## Contributing

@@ -262,7 +262,7 @@ merged: it predates the OpenEverest provider monitoring contract (`MonitoringBin
 
 - [ ] **Upgrade preflight** (`UpgradeProvider.CheckUpgrade`) — block provider/operator upgrades that would break running Instances
 - [ ] **Maintenance gating** — route provider-induced rolling restarts (defaults change, operator bump) through `RequestMaintenance`
-- [ ] `drainDataNodes` defaults and PodDisruptionBudgets per node pool
+- [x] PodDisruptionBudget per node pool (`maxUnavailable: 1`); `drainDataNodes` stays off (it blocks restarts of a yellow cluster and needs spare disk)
 - [ ] InstancePresets (small / medium / large)
 - [ ] Playwright e2e tests against the OpenEverest UI
 - [ ] Complete README (topologies, versions, parameters, troubleshooting); remove pre-alpha banner at OpenEverest v2 GA

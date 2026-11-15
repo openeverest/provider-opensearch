@@ -101,6 +101,18 @@ spec:
             content: ../lib/opensearch.sh test-instance GET /_cluster/health
             check:
               (json_parse($stdout).number_of_nodes): 3
+        # Node drains may evict only one OpenSearch node at a time.
+        - assert:
+            resource:
+              apiVersion: policy/v1
+              kind: PodDisruptionBudget
+              metadata:
+                name: test-instance-nodes-pdb
+              spec:
+                maxUnavailable: 1
+              status:
+                currentHealthy: 3
+                disruptionsAllowed: 1
 
     - name: delete-instance
       try:

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -142,6 +143,12 @@ func TestBuildClusterSpec(t *testing.T) {
 	require.NotNil(t, pool.Persistence.PVC)
 	assert.Equal(t, ptr.To("fast"), pool.Persistence.PVC.StorageClassName)
 	assert.Equal(t, defaultAffinity(testName), pool.Affinity)
+
+	require.NotNil(t, pool.Pdb)
+	assert.True(t, pool.Pdb.Enable)
+	assert.Equal(t, ptr.To(intstr.FromInt32(1)), pool.Pdb.MaxUnavailable)
+	assert.Nil(t, pool.Pdb.MinAvailable, "the operator ignores a PDB with both bounds set")
+	assert.False(t, spec.General.DrainDataNodes, "draining blocks restarts of a yellow cluster")
 }
 
 func TestBuildClusterSpecDefaults(t *testing.T) {
