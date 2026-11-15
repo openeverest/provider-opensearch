@@ -40,6 +40,7 @@ test/
     backup/                    # Snapshot repositories, keystore, SM policies and retention
     dedicated/                 # Dedicated topology: per-role pools, client service, admission rules
     tls/                       # Custom HTTP certificate (Secret or issuer), userSecretRef, InvalidReference holds
+    maintenance/               # Provider-initiated changes held as RollingRestart until approved
   e2e-cluster/
     .chainsaw.yaml             # Separate config: longer default timeouts
     lib/                       # toolbox pod + opensearch.sh/dashboards.sh: calls verified with <name>-conn's ca.crt

@@ -1,0 +1,75 @@
+---
+# Maintenance gating: a change the provider makes on its own (here a rebuilt
+# default image, standing in for a provider upgrade) is held until approved,
+# while the user's own changes go through right away.
+#
+# The OpenSearch operator is not installed (see deploy-provider-ci); the
+# suite only checks the OpenSearchCluster spec the provider applies.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: maintenance
+spec:
+  description: |
+    A provider-initiated change to an existing OpenSearchCluster is held as
+    a RollingRestart maintenance action, does not ride along with an
+    unrelated Instance edit, and is applied once its token is approved.
+
+  # The suite edits the cluster-scoped Provider; never run it alongside others.
+  concurrent: false
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters -o yaml
+    - script:
+        content: kubectl get provider opensearch -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 100
+
+  steps:
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    - name: provider-change-is-held
+      try:
+        - script:
+            content: ./provider-image.sh opensearchproject/opensearch:3.8.0-rebuilt
+        # An edit that does not touch the cluster reconciles the Instance
+        # again without releasing the held change.
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                deletionPolicy: Orphan
+        - assert:
+            file: 20-assert-held.yaml
+        - assert:
+            file: 10-assert.yaml
+      # Runs when the test ends, whatever the outcome.
+      cleanup:
+        - script:
+            content: ./provider-image.sh opensearchproject/opensearch:3.8.0
+
+    - name: approve
+      try:
+        - script:
+            content: |
+              set -e
+              token=$(kubectl -n $NAMESPACE get instance test-instance \
+                -o jsonpath='{.status.pendingMaintenance[0].approvalToken}')
+              test -n "$token"
+              kubectl -n $NAMESPACE patch instance test-instance --type merge \
+                -p "{\"spec\":{\"maintenance\":{\"approved\":\"$token\"}}}"
+        - assert:
+            file: 30-assert-applied.yaml

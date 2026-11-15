@@ -262,7 +262,7 @@ merged: it predates the OpenEverest provider monitoring contract (`MonitoringBin
 ## M7 — Production hardening
 
 - [x] **Upgrade preflight** (`UpgradeProvider.CheckUpgrade`) — pre-upgrade hook Job; blocks while a cluster is mid version upgrade or rolling restart, warns when it is not running or not green
-- [ ] **Maintenance gating** — route provider-induced rolling restarts (defaults change, operator bump) through `RequestMaintenance`
+- [x] **Maintenance gating** — a provider-induced change to an existing `OpenSearchCluster` (new rendering defaults or bundle images) is held as a `RollingRestart` action through `RequestMaintenance`; Instance edits apply right away. Restarts the operator makes on its own after an operator bump are not gated
 - [x] PodDisruptionBudget per node pool (`maxUnavailable: 1`); `drainDataNodes` stays off (it blocks restarts of a yellow cluster and needs spare disk)
 - [ ] InstancePresets (small / medium / large)
 - [ ] Playwright e2e tests against the OpenEverest UI

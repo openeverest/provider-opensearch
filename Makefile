@@ -166,6 +166,10 @@ test-integration-dedicated: ## Run the dedicated topology integration tests.
 test-integration-backup: ## Run the backup configuration integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup
 
+.PHONY: test-integration-maintenance
+test-integration-maintenance: ## Run the maintenance gating integration tests.
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/maintenance
+
 .PHONY: test-integration-tls
 test-integration-tls: install-cert-manager ## Run the custom credentials and TLS integration tests (installs cert-manager).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/tls
