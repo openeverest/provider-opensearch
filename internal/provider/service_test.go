@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+
+	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
 func getService(t *testing.T, cl client.Client, name string) (*corev1.Service, error) {
@@ -26,7 +28,7 @@ func TestSyncExposedService(t *testing.T) {
 	t.Run("no service set: nothing is created", func(t *testing.T) {
 		c, cl := newTestContext(t, testInstance(validEngine()))
 
-		require.NoError(t, syncExposedService(c, validEngine()))
+		require.NoError(t, syncExposedService(c, validEngine(), clientPodSelector(testName, common.TopologyStandard, nil)))
 
 		_, err := getService(t, cl, exposedServiceName(testName))
 		assert.True(t, errors.IsNotFound(err))
@@ -37,7 +39,7 @@ func TestSyncExposedService(t *testing.T) {
 		engine.Service = &corev1alpha1.Service{ServiceType: corev1.ServiceTypeClusterIP}
 		c, cl := newTestContext(t, testInstance(engine))
 
-		require.NoError(t, syncExposedService(c, engine))
+		require.NoError(t, syncExposedService(c, engine, clientPodSelector(testName, common.TopologyStandard, nil)))
 
 		_, err := getService(t, cl, exposedServiceName(testName))
 		assert.True(t, errors.IsNotFound(err))
@@ -54,7 +56,7 @@ func TestSyncExposedService(t *testing.T) {
 		}
 		c, cl := newTestContext(t, testInstance(engine))
 
-		require.NoError(t, syncExposedService(c, engine))
+		require.NoError(t, syncExposedService(c, engine, clientPodSelector(testName, common.TopologyStandard, nil)))
 
 		svc, err := getService(t, cl, exposedServiceName(testName))
 		require.NoError(t, err)
@@ -79,7 +81,7 @@ func TestSyncExposedService(t *testing.T) {
 		}
 		c, cl := newTestContext(t, testInstance(engine))
 
-		require.NoError(t, syncExposedService(c, engine))
+		require.NoError(t, syncExposedService(c, engine, clientPodSelector(testName, common.TopologyStandard, nil)))
 
 		svc, err := getService(t, cl, exposedServiceName(testName))
 		require.NoError(t, err)
@@ -91,12 +93,12 @@ func TestSyncExposedService(t *testing.T) {
 		engine := validEngine()
 		engine.Service = &corev1alpha1.Service{ServiceType: corev1.ServiceTypeLoadBalancer}
 		c, cl := newTestContext(t, testInstance(engine))
-		require.NoError(t, syncExposedService(c, engine))
+		require.NoError(t, syncExposedService(c, engine, clientPodSelector(testName, common.TopologyStandard, nil)))
 		_, err := getService(t, cl, exposedServiceName(testName))
 		require.NoError(t, err, "precondition: the service was created")
 
 		engine.Service.ServiceType = corev1.ServiceTypeClusterIP
-		require.NoError(t, syncExposedService(c, engine))
+		require.NoError(t, syncExposedService(c, engine, clientPodSelector(testName, common.TopologyStandard, nil)))
 
 		_, err = getService(t, cl, exposedServiceName(testName))
 		assert.True(t, errors.IsNotFound(err))
@@ -138,7 +140,25 @@ func TestBuildClusterSpecServiceAnnotations(t *testing.T) {
 	engine := validEngine()
 	engine.Service = &corev1alpha1.Service{Annotations: map[string]string{"example.com/scrape": "true"}}
 
-	spec := buildClusterSpec(testName, engine, "3.8.0", "", nil, nil, nil, nil)
+	spec := buildClusterSpec(clusterInputs{
+		name: testName, topology: common.TopologyStandard, version: "3.8.0",
+		components: map[string]corev1alpha1.ComponentSpec{common.ComponentEngine: engine},
+	})
 
 	assert.Equal(t, map[string]string{"example.com/scrape": "true"}, spec.General.Annotations)
+}
+
+func TestSyncClientService(t *testing.T) {
+	c, cl := newTestContext(t, testInstance(validEngine()))
+	selector := clientPodSelector(testName, common.TopologyDedicated, dedicatedComponents(true))
+
+	require.NoError(t, syncClientService(c, selector))
+
+	svc, err := getService(t, cl, clientServiceName(testName))
+	require.NoError(t, err)
+	assert.Equal(t, corev1.ServiceTypeClusterIP, svc.Spec.Type)
+	assert.Equal(t, selector, svc.Spec.Selector)
+	require.Len(t, svc.Spec.Ports, 1)
+	assert.Equal(t, httpPort, svc.Spec.Ports[0].Port)
+	require.Len(t, svc.OwnerReferences, 1)
 }

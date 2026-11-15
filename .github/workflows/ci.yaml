@@ -116,6 +116,15 @@ jobs:
       suite: features
     secrets: inherit
 
+  test-integration-dedicated:
+    name: Integration / dedicated
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-dedicated
+      suite: dedicated
+    secrets: inherit
+
   test-integration-backup:
     name: Integration / backup
     needs: [lint, build, verify]
@@ -123,6 +132,15 @@ jobs:
     with:
       make_target: test-integration-backup
       suite: backup
+    secrets: inherit
+
+  test-integration-tls:
+    name: Integration / tls
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-tls
+      suite: tls
     secrets: inherit
 
   # Unlike the integration suites above, e2e-cluster deploys the real
@@ -140,6 +158,15 @@ jobs:
       suite: core
     secrets: inherit
 
+  test-e2e-cluster-dedicated:
+    name: E2E Cluster / dedicated
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-dedicated
+      suite: dedicated
+    secrets: inherit
+
   test-e2e-cluster-backup:
     name: E2E Cluster / backup
     needs: [lint, build, verify]
@@ -147,4 +174,13 @@ jobs:
     with:
       make_target: test-e2e-cluster-backup
       suite: backup
+    secrets: inherit
+
+  test-e2e-cluster-tls:
+    name: E2E Cluster / tls
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-tls
+      suite: tls
     secrets: inherit

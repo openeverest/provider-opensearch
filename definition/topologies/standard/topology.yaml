@@ -61,6 +61,20 @@ ui:
                 disabled: true
           validation:
             required: true
+        userSecret:
+          uiType: secret
+          path: spec.userSecretRef.name
+          fieldParams:
+            label: "Admin credentials"
+            definition: user
+            helperText: "Leave empty to generate the admin password."
+            modes:
+              edit:
+                readOnly: true
+                helperText: "Set when the database is created."
+      componentsOrder:
+        - version
+        - userSecret
     resources:
       label: "Resources"
       description: "Configure the resources your OpenSearch cluster will have access to."
@@ -129,6 +143,56 @@ ui:
           componentsOrder:
             - numberOfNodes
             - resources
+    tls:
+      label: "TLS"
+      description: "Connections are always encrypted. Leave empty to use a certificate generated for the instance."
+      components:
+        certificateSecretName:
+          uiType: text
+          path: spec.parameters.tls.certificateSecretName
+          fieldParams:
+            label: "Certificate secret"
+            helperText: "Secret with tls.crt, a PKCS#8 tls.key and ca.crt for the address clients connect to"
+            modes:
+              edit:
+                disabled: true
+          validation:
+            celExpressions:
+              - celExpr: "!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '' || !has(spec.parameters.tls.issuer.name) || spec.parameters.tls.issuer.name == ''"
+                message: "Use either a certificate secret or an issuer, not both"
+        issuer:
+          uiType: group
+          groupType: line
+          components:
+            issuerName:
+              uiType: text
+              path: spec.parameters.tls.issuer.name
+              fieldParams:
+                label: "cert-manager issuer"
+                helperText: "Issuer that signs the certificate"
+                modes:
+                  edit:
+                    disabled: true
+            issuerKind:
+              uiType: select
+              path: spec.parameters.tls.issuer.kind
+              fieldParams:
+                label: "Issuer kind"
+                defaultValue: "Issuer"
+                options:
+                  - label: "Issuer"
+                    value: "Issuer"
+                  - label: "ClusterIssuer"
+                    value: "ClusterIssuer"
+                modes:
+                  edit:
+                    disabled: true
+          componentsOrder:
+            - issuerName
+            - issuerKind
+      componentsOrder:
+        - certificateSecretName
+        - issuer
     advanced:
       label: "Advanced configuration"
       description: "Configure advanced settings for your OpenSearch cluster"
@@ -180,4 +244,5 @@ ui:
   sectionsOrder:
     - databaseVersion
     - resources
+    - tls
     - advanced

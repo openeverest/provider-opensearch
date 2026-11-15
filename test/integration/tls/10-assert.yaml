@@ -1,0 +1,91 @@
+# The user's certificate serves HTTP; transport stays operator-generated. The
+# provider's admin certificate (trusted through tls-http-ca) runs
+# securityadmin, and the admin user is seeded from the copied password.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: tls-secret
+spec:
+  security:
+    tls:
+      transport:
+        generate: true
+        perNode: true
+      http:
+        secret:
+          name: tls-secret-cert
+        caSecret:
+          name: tls-secret-tls-http-ca
+        adminDn:
+          - CN=admin,OU=tls-secret
+    config:
+      adminSecret:
+        name: tls-secret-tls-admin
+      adminCredentialsSecret:
+        name: tls-secret-admin-credentials
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secret-admin-credentials
+data:
+  (base64_decode(username)): admin
+  (base64_decode(password)): custom-Passw0rd
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secret-tls-admin
+data:
+  (length(base64_decode("tls.crt")) > `0`): true
+  (length(base64_decode("tls.key")) > `0`): true
+  (length(base64_decode("ca.crt")) > `0`): true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tls-secret-tls-http-ca
+data:
+  # The user's CA and the provider's admin CA.
+  (length(split(base64_decode("ca.crt"), 'BEGIN CERTIFICATE')) - `1`): 2
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tls-issuer-tls-http
+  ownerReferences:
+    - apiVersion: core.openeverest.io/v1alpha1
+      kind: Instance
+      name: tls-issuer
+spec:
+  secretName: tls-issuer-tls-http
+  commonName: (join('', ['tls-issuer.', $namespace, '.svc']))
+  (contains(dnsNames, join('', ['tls-issuer.', $namespace, '.svc']))): true
+  (contains(dnsNames, join('', ['tls-issuer.', $namespace, '.svc.cluster.local']))): true
+  privateKey:
+    encoding: PKCS8
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: ca
+status:
+  (conditions[?type == 'Ready']):
+    - status: "True"
+---
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: tls-issuer
+spec:
+  security:
+    tls:
+      http:
+        secret:
+          name: tls-issuer-tls-http
+        caSecret:
+          name: tls-issuer-tls-http-ca
+        adminDn:
+          - CN=admin,OU=tls-issuer
+    config:
+      adminSecret:
+        name: tls-issuer-tls-admin

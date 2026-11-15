@@ -6,23 +6,31 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+
+	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
 const (
-	// nodePoolName is the OpenSearchCluster node pool backing the engine
-	// component. The operator uses it in StatefulSet and Service names, so it
-	// must never change for existing clusters.
-	nodePoolName = "nodes"
+	// Node pool names. The operator uses them in StatefulSet, Service and PVC
+	// names, so they must never change for existing clusters.
+	//
+	// nodePoolName is the single pool of the standard topology.
+	nodePoolName        = "nodes"
+	managerPoolName     = "managers"
+	dataPoolName        = "data"
+	coordinatorPoolName = "coordinators"
 
 	httpPort int32 = 9200
 
-	defaultReplicas int32 = 3
+	defaultReplicas            int32 = 3
+	defaultCoordinatorReplicas int32 = 2
 
 	// defaultDashboardsReplicas matches the operator's own CRD default
 	// (kubebuilder:default=1 on DashboardsConfig.Replicas); set explicitly
@@ -34,12 +42,80 @@ const (
 	nodePoolLabel = "opensearch.org/opensearch-nodepool"
 )
 
-// standardRoles are the node roles of the standard topology: every node is
-// cluster-manager eligible, holds data and runs ingest pipelines.
-var standardRoles = []string{"cluster_manager", "data", "ingest"}
+// nodePoolDef ties an Instance component to the OpenSearchCluster node pool
+// it renders.
+type nodePoolDef struct {
+	component       string
+	pool            string
+	roles           []string
+	defaultReplicas int32
+	// ephemeral pools hold no data and get an emptyDir instead of a PVC.
+	ephemeral bool
+}
+
+var (
+	// In the standard topology every node is cluster-manager eligible, holds
+	// data and runs ingest pipelines.
+	standardPools = []nodePoolDef{
+		{component: common.ComponentEngine, pool: nodePoolName, roles: []string{"cluster_manager", "data", "ingest"}, defaultReplicas: defaultReplicas},
+	}
+	// The dedicated topology keeps the cluster-manager quorum off the data
+	// nodes. Coordinating-only nodes have no roles (the CRD requires the
+	// field, so the list is empty rather than nil).
+	dedicatedPools = []nodePoolDef{
+		{component: common.ComponentClusterManager, pool: managerPoolName, roles: []string{"cluster_manager"}, defaultReplicas: defaultReplicas},
+		{component: common.ComponentEngine, pool: dataPoolName, roles: []string{"data", "ingest"}, defaultReplicas: defaultReplicas},
+		{component: common.ComponentCoordinator, pool: coordinatorPoolName, roles: []string{}, defaultReplicas: defaultCoordinatorReplicas, ephemeral: true},
+	}
+)
+
+// topologyOf returns the Instance's topology; an unset type is standard.
+func topologyOf(in *corev1alpha1.Instance) string {
+	if t := in.GetTopologyType(); t != "" {
+		return t
+	}
+	return common.TopologyStandard
+}
+
+// nodePoolDefs returns the node pools of a topology, including the ones of
+// optional components the Instance may leave out.
+func nodePoolDefs(topology string) []nodePoolDef {
+	if topology == common.TopologyDedicated {
+		return dedicatedPools
+	}
+	return standardPools
+}
+
+// clientServiceName is the provider-managed ClusterIP Service clients of a
+// dedicated Instance connect to: it selects the coordinators when there are
+// any, else the data nodes, so cluster managers do not serve client traffic.
+func clientServiceName(clusterName string) string {
+	return clusterName + "-client"
+}
+
+// clientServiceHost is the client Service's DNS name. The operator only puts
+// its own service names in the HTTP certificate and never reissues it when
+// they change, so a dedicated cluster adds this name from creation on.
+func clientServiceHost(clusterName, namespace string) string {
+	return clientServiceName(clusterName) + "." + namespace + ".svc"
+}
+
+// clientPodSelector selects the pods that serve client requests.
+func clientPodSelector(clusterName, topology string, components map[string]corev1alpha1.ComponentSpec) map[string]string {
+	selector := map[string]string{clusterLabel: clusterName}
+	if topology != common.TopologyDedicated {
+		return selector
+	}
+	selector[nodePoolLabel] = dataPoolName
+	if _, ok := components[common.ComponentCoordinator]; ok {
+		selector[nodePoolLabel] = coordinatorPoolName
+	}
+	return selector
+}
 
 // adminSecretName is the operator-generated secret with the admin user's
-// credentials (keys "username" and "password").
+// credentials (keys "username" and "password"), when spec.userSecretRef does
+// not seed them.
 func adminSecretName(clusterName string) string {
 	return clusterName + "-admin-password"
 }
@@ -53,24 +129,37 @@ func unownedSecretNames(clusterName string) []string {
 	}
 }
 
-// buildClusterSpec maps the engine component of an Instance onto an
-// OpenSearchCluster spec for the standard topology.
-func buildClusterSpec(
-	name string,
-	engine corev1alpha1.ComponentSpec,
-	version, image string,
-	additionalConfig map[string]string,
-	snapshotRepos []opensearchv1.SnapshotRepoConfig,
-	keystore []opensearchv1.KeystoreValue,
-	backupPlugins []string,
-) opensearchv1.ClusterSpec {
+// clusterInputs is everything an OpenSearchCluster spec is rendered from.
+type clusterInputs struct {
+	name       string
+	namespace  string
+	topology   string
+	components map[string]corev1alpha1.ComponentSpec
+	// configs holds each OpenSearch component's parsed opensearch.yml
+	// fragment, keyed by component name.
+	configs        map[string]map[string]string
+	version, image string
+	snapshotRepos  []opensearchv1.SnapshotRepoConfig
+	keystore       []opensearchv1.KeystoreValue
+	backupPlugins  []string
+	// customHTTP holds the security settings of a user-supplied HTTP
+	// certificate (see syncHTTPCertificate); nil when it is generated.
+	customHTTP *opensearchv1.Security
+	// adminCredentials names the Secret the admin user is seeded from; empty
+	// lets the operator generate one.
+	adminCredentials string
+}
+
+// buildClusterSpec maps the OpenSearch components of an Instance onto an
+// OpenSearchCluster spec, one node pool per component.
+func buildClusterSpec(in clusterInputs) opensearchv1.ClusterSpec {
 	general := opensearchv1.GeneralConfig{
-		Version:              version,
-		ServiceName:          name,
+		Version:              in.version,
+		ServiceName:          in.name,
 		HttpPort:             httpPort,
-		SnapshotRepositories: snapshotRepos,
-		Keystore:             keystore,
-		PluginsList:          backupPlugins,
+		SnapshotRepositories: in.snapshotRepos,
+		Keystore:             in.keystore,
+		PluginsList:          in.backupPlugins,
 		// The PVCs hold the only copy of the data; drop them with the cluster
 		// but keep them on scale-down so scaling back up reuses them.
 		PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
@@ -78,53 +167,92 @@ func buildClusterSpec(
 			WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
 		},
 	}
-	if image != "" {
+	if in.image != "" {
+		image := in.image
 		general.ImageSpec = &opensearchv1.ImageSpec{Image: &image}
 	}
-	if engine.Service != nil {
-		general.Annotations = engine.Service.Annotations
+	if svc := in.components[common.ComponentEngine].Service; svc != nil {
+		general.Annotations = svc.Annotations
+	}
+
+	httpTLS := &opensearchv1.TlsConfigHttp{Generate: true}
+	if in.topology == common.TopologyDedicated {
+		host := clientServiceHost(in.name, in.namespace)
+		httpTLS.CustomFQDN = &host
+	}
+
+	var pools []opensearchv1.NodePool
+	for _, def := range nodePoolDefs(in.topology) {
+		component, ok := in.components[def.component]
+		if !ok && def.component != common.ComponentEngine {
+			continue
+		}
+		pools = append(pools, buildNodePool(in.name, def, component, in.configs[def.component]))
+	}
+
+	security := &opensearchv1.Security{
+		Tls: &opensearchv1.TlsConfig{
+			Transport: &opensearchv1.TlsConfigTransport{Generate: true, PerNode: true},
+			Http:      httpTLS,
+		},
+	}
+	if in.customHTTP != nil {
+		// The operator ignores customFQDN for a certificate it does not
+		// generate; it stays as the host connectionDetails publishes.
+		custom := *in.customHTTP.Tls.Http
+		custom.CustomFQDN = httpTLS.CustomFQDN
+		security.Tls.Http = &custom
+		security.Config = in.customHTTP.Config
+	}
+	if in.adminCredentials != "" {
+		if security.Config == nil {
+			security.Config = &opensearchv1.SecurityConfig{}
+		}
+		security.Config.AdminCredentialsSecret = corev1.LocalObjectReference{Name: in.adminCredentials}
 	}
 
 	return opensearchv1.ClusterSpec{
 		General: general,
 		// Sent explicitly: the CRD default does not apply to a serialized false.
-		ConfMgmt: opensearchv1.ConfMgmt{SmartScaler: true},
-		Security: &opensearchv1.Security{
-			Tls: &opensearchv1.TlsConfig{
-				Transport: &opensearchv1.TlsConfigTransport{Generate: true, PerNode: true},
-				Http:      &opensearchv1.TlsConfigHttp{Generate: true},
-			},
-		},
-		NodePools: []opensearchv1.NodePool{buildNodePool(name, engine, additionalConfig)},
+		ConfMgmt:  opensearchv1.ConfMgmt{SmartScaler: true},
+		Security:  security,
+		NodePools: pools,
 	}
 }
 
-func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec, additionalConfig map[string]string) opensearchv1.NodePool {
+func buildNodePool(clusterName string, def nodePoolDef, component corev1alpha1.ComponentSpec, additionalConfig map[string]string) opensearchv1.NodePool {
 	pool := opensearchv1.NodePool{
-		Component:        nodePoolName,
+		Component:        def.pool,
 		AdditionalConfig: additionalConfig,
-		Replicas:         defaultReplicas,
-		Roles:            standardRoles,
-		Resources:        nodeResources(engine.Resources),
-		Persistence: &opensearchv1.PersistenceConfig{
+		Replicas:         def.defaultReplicas,
+		Roles:            def.roles,
+		Resources:        nodeResources(component.Resources),
+		Pdb:              nodePoolPDB(),
+	}
+	if component.Replicas != nil {
+		pool.Replicas = *component.Replicas
+	}
+	if def.ephemeral {
+		pool.Persistence = &opensearchv1.PersistenceConfig{
+			PersistenceSource: opensearchv1.PersistenceSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		}
+	} else {
+		pool.Persistence = &opensearchv1.PersistenceConfig{
 			PersistenceSource: opensearchv1.PersistenceSource{
 				PVC: &opensearchv1.PVCSource{
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 				},
 			},
-		},
-	}
-	if engine.Replicas != nil {
-		pool.Replicas = *engine.Replicas
-	}
-	if engine.Storage != nil {
-		pool.DiskSize = engine.Storage.Size
-		pool.Persistence.PVC.StorageClassName = engine.Storage.StorageClass
+		}
+		if component.Storage != nil {
+			pool.DiskSize = component.Storage.Size
+			pool.Persistence.PVC.StorageClassName = component.Storage.StorageClass
+		}
 	}
 
 	var policy commonv1alpha1.SchedulingPolicy
-	if engine.SchedulingPolicy != nil {
-		policy = *engine.SchedulingPolicy
+	if component.SchedulingPolicy != nil {
+		policy = *component.SchedulingPolicy
 	}
 	pool.NodeSelector = policy.NodeSelector
 	pool.Tolerations = policy.Tolerations
@@ -133,10 +261,20 @@ func buildNodePool(clusterName string, engine corev1alpha1.ComponentSpec, additi
 	}
 	pool.Affinity = policy.Affinity
 	if pool.Affinity == nil {
-		pool.Affinity = defaultAffinity(clusterName)
+		pool.Affinity = defaultAffinity(clusterName, def.pool)
 	}
 
 	return pool
+}
+
+// nodePoolPDB lets voluntary disruptions (node drains, cluster autoscaler)
+// evict at most one OpenSearch node at a time, so a 3-node cluster keeps its
+// cluster-manager quorum. maxUnavailable rather than minAvailable keeps a
+// 1-node Instance drainable. The operator's own restarts and upgrades delete
+// pods directly and are not limited by it.
+func nodePoolPDB() *opensearchv1.PdbConfig {
+	maxUnavailable := intstr.FromInt32(1)
+	return &opensearchv1.PdbConfig{Enable: true, MaxUnavailable: &maxUnavailable}
 }
 
 // buildDashboardsConfig maps the optional dashboards component onto the
@@ -219,8 +357,9 @@ func nodeResources(in *corev1.ResourceRequirements) corev1.ResourceRequirements 
 	return out
 }
 
-// defaultAffinity prefers spreading OpenSearch nodes across Kubernetes nodes.
-func defaultAffinity(clusterName string) *corev1.Affinity {
+// defaultAffinity prefers spreading the nodes of a pool across Kubernetes
+// nodes.
+func defaultAffinity(clusterName, poolName string) *corev1.Affinity {
 	return &corev1.Affinity{
 		PodAntiAffinity: &corev1.PodAntiAffinity{
 			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
@@ -230,7 +369,7 @@ func defaultAffinity(clusterName string) *corev1.Affinity {
 					LabelSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							clusterLabel:  clusterName,
-							nodePoolLabel: nodePoolName,
+							nodePoolLabel: poolName,
 						},
 					},
 				},

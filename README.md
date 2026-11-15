@@ -57,7 +57,7 @@ for what is planned next.
 
 | Capability | Status | Notes |
 |---|---|---|
-| Provisioning | ✅ | `standard` topology |
+| Provisioning | ✅ | `standard` and `dedicated` topologies; see [Topologies](#topologies) |
 | Horizontal scaling | ✅ | `spec.components.engine.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources`; the JVM heap is half the memory request |
 | Version upgrades | ✅ | `spec.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
@@ -65,14 +65,16 @@ for what is planned next.
 | External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service; the certificate covers in-cluster names only |
 | Dashboards | ✅ | Optional `dashboards` component; see [Configuration](#configuration) |
 | Monitoring | ❌ | Planned on the OpenEverest monitoring contract (#14) |
-| TLS | ✅ | Operator-generated certificates for transport and HTTP, always on |
+| TLS | ✅ | Always on. The HTTP certificate is generated, or comes from a Secret or a cert-manager issuer (`spec.parameters.tls`); transport certificates are always generated. See [Configuration](#configuration) |
+| Custom credentials | ✅ | `spec.userSecretRef` seeds the `admin` password at creation; see [Configuration](#configuration) |
 
 Stateful workloads additionally report:
 
 | Capability | Status | Notes |
 |---|---|---|
-| Persistent storage | ✅ | `spec.components.engine.storage`; volumes are deleted with the Instance |
-| Storage expansion | ✅ | `spec.components.engine.storage.size`; rejected when the StorageClass does not allow expansion |
+| Persistent storage | ✅ | `spec.components.engine.storage` (and `clusterManager.storage` in `dedicated`); volumes are deleted with the Instance |
+| Storage expansion | ✅ | `spec.components.<component>.storage.size`; rejected when the StorageClass does not allow expansion |
+| Disruption budget | ✅ | A `PodDisruptionBudget` lets node drains evict one OpenSearch node at a time; see [Configuration](#configuration) |
 | Backups (on demand) | ✅ | S3-compatible storage, via the OpenSearch snapshot API; see [Configuration](#configuration) |
 | Backups (scheduled) | ✅ | `spec.backup.storages[].schedules[]`; see [Configuration](#configuration) |
 | Restore | ✅ | In place, or seeding a new Instance via `spec.dataSource`; see [Configuration](#configuration) |
@@ -105,6 +107,20 @@ Upgrade and uninstall:
 helm upgrade provider-opensearch oci://ghcr.io/openeverest/charts/provider-opensearch
 helm uninstall provider-opensearch --namespace everest-system
 ```
+
+A `helm upgrade` first runs a preflight Job with the new provider image. It aborts the upgrade
+when an `OpenSearchCluster` is in the middle of a version upgrade or a rolling restart, or when
+the installed release is older than the new release's `minUpgradableFrom`. A cluster that is
+not running or not green only produces a warning. The report is in the Job's log, which Helm
+keeps when the hook fails:
+
+```bash
+kubectl logs -n everest-system job/provider-opensearch-preflight
+```
+
+A provider upgrade can itself restart the nodes one by one, when the new release changes how
+the cluster is rendered or bundles a newer operator. These restarts are not yet held for
+approval through `spec.maintenance`; upgrade the provider in a maintenance window.
 
 Uninstalling the chart does **not** delete running `Instance` resources or their data.
 
@@ -149,8 +165,9 @@ kubectl get secret "$(kubectl get instance my-instance -o jsonpath='{.status.con
 ```
 
 The connection secret holds the HTTPS endpoint (`host`, `port`, `uri`) of the cluster's
-client service and the `admin` user's credentials. The HTTP certificate is signed by a CA the
-operator generates per cluster (secret `<instance>-ca`).
+client service (`<instance>` or, in the `dedicated` topology, `<instance>-client`), the `admin` user's credentials and
+`ca.crt`, the CA that verifies the endpoint. Unless [custom TLS](#configuration) is set, the HTTP certificate is signed by a CA
+the operator generates per cluster (secret `<instance>-ca`).
 
 ## Topologies
 
@@ -161,7 +178,42 @@ operator generates per cluster (secret `<instance>-ca`).
 | Topology | Default | Description |
 |---|---|---|
 | `standard` | ✅ | One node pool (`engine`); every node is cluster-manager eligible, holds data and runs ingest pipelines. 3 nodes by default |
+| `dedicated` | | One node pool per role: `clusterManager` (3 by default), `engine` as data + ingest nodes (3 by default), and optional coordinating-only `coordinator` nodes (2 by default, no storage) |
 <!-- END GENERATED: topologies -->
+
+The topology is chosen at creation and cannot be changed afterwards. Choose `dedicated` for
+larger clusters: the cluster-manager quorum keeps working while data nodes are busy or
+restarting, and coordinators take request routing and result merging off the data nodes.
+
+```yaml
+spec:
+  topology:
+    type: dedicated
+  components:
+    clusterManager:
+      replicas: 3
+      resources: {limits: {cpu: "1", memory: 2Gi}}
+      storage: {size: 5Gi}
+    engine:
+      replicas: 3
+      resources: {limits: {cpu: "2", memory: 8Gi}}
+      storage: {size: 100Gi}
+    coordinator:  # optional
+      replicas: 2
+      resources: {limits: {cpu: "1", memory: 4Gi}}
+```
+
+In the `dedicated` topology:
+
+- `clusterManager.replicas` must be odd; a single cluster manager is allowed with a warning,
+  since the cluster stops accepting writes while it restarts.
+- Clients connect to the `<instance>-client` service, which is in the HTTP certificate. It
+  routes to the coordinators when there are any, else to the data nodes, so adding or
+  removing `coordinator` does not change the connection details. `engine.service` exposes
+  the same nodes.
+- Each OpenSearch component takes its own `parameters.configuration`, applied to its nodes
+  only.
+- Storage size and class rules apply to `clusterManager` and `engine` alike.
 
 ## Versions
 
@@ -194,6 +246,10 @@ Worth knowing:
   names from it.
 - **Storage class** — cannot be changed after creation. A size increase is rejected if the
   class's `allowVolumeExpansion` is not `true`.
+- **Rolling restarts** — changing the version, resources, custom configuration, or enabling
+  backups restarts the nodes one by one. Restarts the user asks for are applied right away;
+  `spec.maintenance` does not hold them. Scaling and Dashboards changes do
+  not restart the OpenSearch nodes.
 - **Version changes** — downgrades and upgrades that skip a major version are rejected; see
   [Versions](#versions).
 - **Custom configuration** — `spec.components.engine.parameters.configuration` takes an
@@ -212,8 +268,39 @@ Worth knowing:
   Reverting to `ClusterIP` (or unsetting `service`) removes the `<name>-exposed` service.
   Once a `LoadBalancer` has an address, the connection secret publishes it as `host`. The
   operator-generated HTTP certificate only covers the in-cluster names, so external clients
-  must trust `<name>-ca` and skip hostname verification, or use their own certificates
-  (tracked in #15).
+  must trust `<name>-ca` and skip hostname verification, or the Instance must use a custom
+  certificate that also names the external address (see TLS below).
+- **Admin credentials** — set `spec.userSecretRef.name` to a Secret with a `password` key (and
+  optionally `username: admin`; the operator manages only the `admin` user) to choose the
+  admin password. It can only be set when the Instance is created. The provider copies the
+  password once into `<name>-admin-credentials`, so later edits to your Secret do not change
+  it. Without it the operator generates the password (`<name>-admin-password`).
+- **TLS** — connections are always encrypted. By default the operator generates the HTTP
+  (client) and transport certificates. To use your own HTTP certificate, set one of these
+  when the Instance is created; neither can be changed or removed afterwards:
+  - `spec.parameters.tls.certificateSecretName`: a Secret in the Instance namespace with
+    `tls.crt`, `tls.key` and `ca.crt`. The key must be PKCS#8 (`BEGIN PRIVATE KEY`), which
+    OpenSearch requires, and the certificate must be valid for the client host,
+    `<name>.<namespace>.svc` (or `<name>-client.<namespace>.svc` in `dedicated`), with
+    server auth usage, verifiable with `ca.crt`. The Instance stays `Pending` with the reason
+    until the Secret qualifies.
+  - `spec.parameters.tls.issuer` (`name`, `kind`: `Issuer` or `ClusterIssuer`): the provider
+    requests a cert-manager `Certificate`, `<name>-tls-http`, for the cluster's service names
+    with a PKCS#8 key. cert-manager must be installed.
+
+  Replacing the certificate in the Secret (or a cert-manager renewal) is picked up by the
+  nodes without a restart. Since the operator cannot sign its admin client certificate with
+  your CA, the provider keeps a CA of its own for it (`<name>-tls-admin-ca`,
+  `<name>-tls-admin`) and has the nodes trust both (`<name>-tls-http-ca`).
+- **Node drains** — every Instance gets a `PodDisruptionBudget`, `<name>-nodes-pdb`, with
+  `maxUnavailable: 1`. Draining Kubernetes nodes (upgrades, autoscaler) therefore evicts one
+  OpenSearch node at a time and a 3-node cluster keeps its cluster-manager quorum; a 1-node
+  Instance can still be drained, with downtime. The budget counts ready pods, and a pod is
+  ready once its node answers, before its shards have recovered: drain one node at a time and
+  wait for green health in between. The operator's own rolling restarts and upgrades are not
+  limited by it. They restart one node at a time with shard allocation limited to primaries
+  (`general.drainDataNodes` stays off: moving every shard off a node before each restart would
+  block restarts of a yellow cluster and need spare disk).
 - **Dashboards** — an optional `dashboards` component deploys OpenSearch Dashboards as part of
   the same `OpenSearchCluster`. Supported fields: `replicas`, `resources`, and `service`
   (`serviceType`, `annotations`, `loadBalancerService.sourceRanges` — the operator supports a
@@ -306,8 +393,10 @@ kubectl logs -n everest-system deploy/provider-opensearch -f
 |---|---|
 | `Instance` stuck in `Creating` | `kubectl describe instance <name>` conditions, then the provider logs |
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
+| `helm upgrade` fails with `pre-upgrade hooks failed` | `kubectl logs -n everest-system job/provider-opensearch-preflight` names the blocking Instance; wait for its upgrade or restart to finish and retry |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `opensearch` |
 | Operator resource created but no pods | `kubectl get opensearchcluster <name> -o yaml` — the failure is upstream; check the operator logs |
+| `kubectl drain` waits on `Cannot evict pod as it would violate the pod's disruption budget` | Another OpenSearch node of the Instance is not ready yet; the drain continues once it is |
 | Pods crash with `max virtual memory areas vm.max_map_count` | The operator sets it through a privileged init container; the cluster's pod security settings must allow it |
 
 ## Contributing

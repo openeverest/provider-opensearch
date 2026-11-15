@@ -1,0 +1,32 @@
+# A namespaced CA for the TLS suites: a self-signed root and the "ca" Issuer
+# signing with it. Applied by certificate.sh, and referenced directly by
+# Instances in issuer mode.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ca
+spec:
+  isCA: true
+  commonName: test-ca
+  secretName: ca
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    kind: Issuer
+    name: selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: ca
+spec:
+  ca:
+    secretName: ca

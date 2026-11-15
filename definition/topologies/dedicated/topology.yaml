@@ -1,0 +1,419 @@
+# Dedicated topology definition.
+# Separate node pools per role: cluster managers hold the voting quorum,
+# data nodes hold the shards and run ingest pipelines, and optional
+# coordinating-only nodes route client requests.
+#
+# config.components: Which components are used and their defaults.
+# ui: Rendering hints for the frontend form.
+#
+# The topology is fixed at creation: switching an existing Instance between
+# standard and dedicated is rejected.
+#
+# See github.com/openeverest/provider-sdk/blob/main/PROVIDER_DEVELOPMENT.md
+# for detailed guidance.
+
+config:
+  components:
+    clusterManager:
+      defaults:
+        replicas: 3
+      supportedFields:
+        required: [storage]
+        properties:
+          storage: {}
+          resources: {}
+          # Must be odd; Validate rejects an even count.
+          replicas: {minimum: 1}
+          schedulingPolicy:
+            properties:
+              affinity: {}
+              nodeSelector: {}
+              tolerations: {}
+              topologySpreadConstraints: {}
+    engine:
+      defaults:
+        replicas: 3
+      supportedFields:
+        required: [storage]
+        properties:
+          storage: {}
+          resources: {}
+          replicas: {minimum: 1}
+          # Exposes the coordinators when there are any, else the data nodes.
+          service: {}
+          schedulingPolicy:
+            properties:
+              affinity: {}
+              nodeSelector: {}
+              tolerations: {}
+              topologySpreadConstraints: {}
+    coordinator:
+      optional: true
+      defaults:
+        replicas: 2
+      # Coordinating-only nodes hold no data: no storage field.
+      supportedFields:
+        properties:
+          resources: {}
+          replicas: {minimum: 1}
+          schedulingPolicy:
+            properties:
+              affinity: {}
+              nodeSelector: {}
+              tolerations: {}
+              topologySpreadConstraints: {}
+    dashboards:
+      optional: true
+      defaults:
+        replicas: 1
+      supportedFields:
+        properties:
+          resources: {}
+          replicas: {minimum: 1}
+          service: {}
+
+ui:
+  sections:
+    databaseVersion:
+      label: "Database Version"
+      description: "Provide the information about the OpenSearch version you want to use."
+      components:
+        version:
+          uiType: select
+          path: spec.version
+          fieldParams:
+            label: "OpenSearch Version"
+            optionsPath: spec.versions
+            optionsPathConfig:
+              labelPath: "name"
+              valuePath: "name"
+            modes:
+              edit:
+                disabled: true
+              restore:
+                disabled: true
+          validation:
+            required: true
+        userSecret:
+          uiType: secret
+          path: spec.userSecretRef.name
+          fieldParams:
+            label: "Admin credentials"
+            definition: user
+            helperText: "Leave empty to generate the admin password."
+            modes:
+              edit:
+                readOnly: true
+                helperText: "Set when the database is created."
+      componentsOrder:
+        - version
+        - userSecret
+    resources:
+      label: "Resources"
+      description: "Configure the cluster managers, data nodes and optional coordinating nodes of your OpenSearch cluster."
+      components:
+        clusterManagers:
+          uiType: group
+          label: "Cluster managers"
+          description: "Hold the cluster state and elect the active cluster manager. Use an odd number."
+          components:
+            numberOfManagers:
+              path: "spec.components.clusterManager.replicas"
+              uiType: number
+              fieldParams:
+                label: "Number of cluster managers"
+                defaultValue: 3
+              validation:
+                required: true
+                min: 1
+                int: true
+                celExpressions:
+                  - celExpr: "spec.components.clusterManager.replicas % 2 == 1"
+                    message: "Use an odd number (1, 3, 5) to keep a voting majority"
+            resources:
+              uiType: group
+              groupType: line
+              components:
+                cpu:
+                  path: "spec.components.clusterManager.resources.limits.cpu"
+                  uiType: number
+                  fieldParams:
+                    label: "CPU"
+                    defaultValue: 1
+                    step: 0.5
+                  validation:
+                    min: 0.5
+                    required: true
+                memory:
+                  path: "spec.components.clusterManager.resources.limits.memory"
+                  uiType: number
+                  fieldParams:
+                    label: "Memory"
+                    defaultValue: 2
+                    step: 0.5
+                    badge: "Gi"
+                    badgeToApi: true
+                  validation:
+                    min: 2
+                    required: true
+                disk:
+                  path: "spec.components.clusterManager.storage.size"
+                  uiType: number
+                  fieldParams:
+                    label: "Disk"
+                    defaultValue: 5
+                    badge: "Gi"
+                    badgeToApi: true
+                  validation:
+                    min: 1
+                    int: true
+                    required: true
+                    modes:
+                      edit:
+                        celExpressions:
+                          - celExpr: "spec.components.clusterManager.storage.size >= original.spec.components.clusterManager.storage.size"
+                            message: "Disk size cannot be decreased"
+          componentsOrder:
+            - numberOfManagers
+            - resources
+        dataNodes:
+          uiType: group
+          label: "Data nodes"
+          description: "Hold the indexed data and run ingest pipelines."
+          components:
+            numberOfNodes:
+              path: "spec.components.engine.replicas"
+              uiType: number
+              fieldParams:
+                label: "Number of data nodes"
+                defaultValue: 3
+              validation:
+                required: true
+                min: 1
+                int: true
+                modes:
+                  edit:
+                    celExpressions:
+                      - celExpr: "!(spec.components.engine.replicas == 1 && original.spec.components.engine.replicas > 1)"
+                        message: "Cannot scale down to a single node"
+            resources:
+              uiType: group
+              groupType: line
+              components:
+                cpu:
+                  path: "spec.components.engine.resources.limits.cpu"
+                  uiType: number
+                  fieldParams:
+                    label: "CPU"
+                    defaultValue: 1
+                    step: 0.5
+                  validation:
+                    min: 0.5
+                    required: true
+                memory:
+                  path: "spec.components.engine.resources.limits.memory"
+                  uiType: number
+                  fieldParams:
+                    label: "Memory"
+                    defaultValue: 4
+                    step: 0.5
+                    badge: "Gi"
+                    badgeToApi: true
+                  validation:
+                    min: 2
+                    required: true
+                disk:
+                  path: "spec.components.engine.storage.size"
+                  uiType: number
+                  fieldParams:
+                    label: "Disk"
+                    defaultValue: 25
+                    badge: "Gi"
+                    badgeToApi: true
+                  validation:
+                    min: 1
+                    int: true
+                    required: true
+                    modes:
+                      edit:
+                        celExpressions:
+                          - celExpr: "spec.components.engine.storage.size >= original.spec.components.engine.storage.size"
+                            message: "Disk size cannot be decreased"
+          componentsOrder:
+            - numberOfNodes
+            - resources
+        # Switching the group off leaves the coordinator component out; the
+        # client service then routes to the data nodes.
+        coordinators:
+          uiType: group
+          groupType: toggleable
+          label: "Coordinating nodes"
+          description: "Route search and indexing requests and merge results, taking that load off the data nodes. They store no data."
+          components:
+            numberOfCoordinators:
+              path: "spec.components.coordinator.replicas"
+              uiType: number
+              fieldParams:
+                label: "Number of coordinating nodes"
+                defaultValue: 2
+              validation:
+                required: true
+                min: 1
+                int: true
+            resources:
+              uiType: group
+              groupType: line
+              components:
+                cpu:
+                  path: "spec.components.coordinator.resources.limits.cpu"
+                  uiType: number
+                  fieldParams:
+                    label: "CPU"
+                    defaultValue: 1
+                    step: 0.5
+                  validation:
+                    min: 0.5
+                    required: true
+                memory:
+                  path: "spec.components.coordinator.resources.limits.memory"
+                  uiType: number
+                  fieldParams:
+                    label: "Memory"
+                    defaultValue: 4
+                    step: 0.5
+                    badge: "Gi"
+                    badgeToApi: true
+                  validation:
+                    min: 2
+                    required: true
+          componentsOrder:
+            - numberOfCoordinators
+            - resources
+      componentsOrder:
+        - clusterManagers
+        - dataNodes
+        - coordinators
+    tls:
+      label: "TLS"
+      description: "Connections are always encrypted. Leave empty to use a certificate generated for the instance."
+      components:
+        certificateSecretName:
+          uiType: text
+          path: spec.parameters.tls.certificateSecretName
+          fieldParams:
+            label: "Certificate secret"
+            helperText: "Secret with tls.crt, a PKCS#8 tls.key and ca.crt for the address clients connect to"
+            modes:
+              edit:
+                disabled: true
+          validation:
+            celExpressions:
+              - celExpr: "!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '' || !has(spec.parameters.tls.issuer.name) || spec.parameters.tls.issuer.name == ''"
+                message: "Use either a certificate secret or an issuer, not both"
+        issuer:
+          uiType: group
+          groupType: line
+          components:
+            issuerName:
+              uiType: text
+              path: spec.parameters.tls.issuer.name
+              fieldParams:
+                label: "cert-manager issuer"
+                helperText: "Issuer that signs the certificate"
+                modes:
+                  edit:
+                    disabled: true
+            issuerKind:
+              uiType: select
+              path: spec.parameters.tls.issuer.kind
+              fieldParams:
+                label: "Issuer kind"
+                defaultValue: "Issuer"
+                options:
+                  - label: "Issuer"
+                    value: "Issuer"
+                  - label: "ClusterIssuer"
+                    value: "ClusterIssuer"
+                modes:
+                  edit:
+                    disabled: true
+          componentsOrder:
+            - issuerName
+            - issuerKind
+      componentsOrder:
+        - certificateSecretName
+        - issuer
+    advanced:
+      label: "Advanced configuration"
+      description: "Configure advanced settings for your OpenSearch cluster"
+      components:
+        storageClass:
+          uiType: select
+          path: spec.components.engine.storage.storageClass
+          fieldParams:
+            label: "Data nodes storage class"
+            modes:
+              edit:
+                disabled: true
+              restore:
+                disabled: true
+          validation:
+            required: true
+          dataSource:
+            provider: storageClasses
+        managerStorageClass:
+          uiType: select
+          path: spec.components.clusterManager.storage.storageClass
+          fieldParams:
+            label: "Cluster managers storage class"
+            modes:
+              edit:
+                disabled: true
+              restore:
+                disabled: true
+          validation:
+            required: true
+          dataSource:
+            provider: storageClasses
+        configuration:
+          uiType: text
+          path: spec.components.engine.parameters.configuration
+          fieldParams:
+            label: "Data nodes opensearch.yml"
+            placeholder: |2
+              cluster.routing.allocation.disk.threshold_enabled: false
+            multiline: true
+            minRows: 3
+            maxRows: 8
+        managerConfiguration:
+          uiType: text
+          path: spec.components.clusterManager.parameters.configuration
+          fieldParams:
+            label: "Cluster managers opensearch.yml"
+            multiline: true
+            minRows: 3
+            maxRows: 8
+        externalAccess:
+          uiType: select
+          path: spec.components.engine.service.serviceType
+          fieldParams:
+            label: "External access"
+            defaultValue: "ClusterIP"
+            options:
+              - label: "ClusterIP"
+                value: "ClusterIP"
+              - label: "LoadBalancer"
+                value: "LoadBalancer"
+              - label: "NodePort"
+                value: "NodePort"
+      componentsOrder:
+        - storageClass
+        - managerStorageClass
+        - configuration
+        - managerConfiguration
+        - externalAccess
+  sectionsOrder:
+    - databaseVersion
+    - resources
+    - tls
+    - advanced

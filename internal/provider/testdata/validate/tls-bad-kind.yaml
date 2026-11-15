@@ -1,0 +1,21 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: example
+spec:
+  providerRef:
+    name: opensearch
+  parameters:
+    tls:
+      issuer:
+        name: ca
+        kind: Vault
+  components:
+    engine:
+      replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 4Gi
+      storage:
+        size: 10Gi

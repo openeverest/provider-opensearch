@@ -84,9 +84,15 @@ func withHost(details controller.ConnectionDetails, host string) controller.Conn
 }
 
 // connectionDetails builds the HTTPS endpoint of the cluster's client
-// service together with the admin credentials.
-func connectionDetails(cluster *opensearchv1.OpenSearchCluster, adminSecret *corev1.Secret) controller.ConnectionDetails {
+// service together with the admin credentials and the CA that verifies the
+// endpoint. A dedicated cluster's client service is the extra name in its
+// HTTP certificate.
+func connectionDetails(cluster *opensearchv1.OpenSearchCluster, adminSecret *corev1.Secret, ca []byte) controller.ConnectionDetails {
 	host := fmt.Sprintf("%s.%s.svc", cluster.Spec.General.ServiceName, cluster.Namespace)
+	if sec := cluster.Spec.Security; sec != nil && sec.Tls != nil && sec.Tls.Http != nil &&
+		sec.Tls.Http.CustomFQDN != nil && *sec.Tls.Http.CustomFQDN != "" {
+		host = *sec.Tls.Http.CustomFQDN
+	}
 	port := cluster.Spec.General.HttpPort
 	if port == 0 {
 		port = httpPort
@@ -101,7 +107,7 @@ func connectionDetails(cluster *opensearchv1.OpenSearchCluster, adminSecret *cor
 		Host:   net.JoinHostPort(host, portStr),
 	}
 
-	return controller.ConnectionDetails{
+	details := controller.ConnectionDetails{
 		Type:     "opensearch",
 		Provider: common.ProviderName,
 		Host:     host,
@@ -110,4 +116,8 @@ func connectionDetails(cluster *opensearchv1.OpenSearchCluster, adminSecret *cor
 		Password: password,
 		URI:      uri.String(),
 	}
+	if len(ca) > 0 {
+		details.AdditionalProperties = map[string]string{caKey: string(ca)}
+	}
+	return details
 }

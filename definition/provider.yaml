@@ -4,12 +4,25 @@
 
 name: opensearch
 
+# Instance-wide parameters (Instance.spec.parameters), a Go type in
+# definition/types.go.
+parametersSchema: Parameters
+
 # engine: OpenSearch nodes. In the standard topology every node is
-# cluster-manager eligible and holds data.
+# cluster-manager eligible and holds data; in the dedicated topology these are
+# the data nodes.
+# clusterManager, coordinator: the dedicated topology's cluster-manager and
+# coordinating-only nodes.
 # dashboards: optional OpenSearch Dashboards deployment, managed by the
 # operator as part of the same OpenSearchCluster.
 components:
   engine:
+    type: opensearch
+    parametersSchema: OpensearchParameters
+  clusterManager:
+    type: opensearch
+    parametersSchema: OpensearchParameters
+  coordinator:
     type: opensearch
     parametersSchema: OpensearchParameters
   dashboards:

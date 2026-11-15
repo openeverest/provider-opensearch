@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
@@ -111,7 +112,7 @@ func TestConnectionDetails(t *testing.T) {
 		"password": []byte("p@ss:w/rd!"),
 	}}
 
-	got := connectionDetails(testCluster(3, opensearchv1.ClusterStatus{}), secret)
+	got := connectionDetails(testCluster(3, opensearchv1.ClusterStatus{}), secret, nil)
 
 	assert.Equal(t, "opensearch", got.Type)
 	assert.Equal(t, "my-search.db.svc", got.Host)
@@ -125,6 +126,17 @@ func TestConnectionDetails(t *testing.T) {
 	assert.Equal(t, "my-search.db.svc:9200", u.Host)
 	pass, _ := u.User.Password()
 	assert.Equal(t, "p@ss:w/rd!", pass, "the password must survive URI encoding")
+}
+
+func TestConnectionDetailsDedicated(t *testing.T) {
+	cluster := testCluster(3, opensearchv1.ClusterStatus{})
+	cluster.Spec.Security = &opensearchv1.Security{Tls: &opensearchv1.TlsConfig{
+		Http: &opensearchv1.TlsConfigHttp{CustomFQDN: ptr.To(clientServiceHost(testName, testNamespace))},
+	}}
+
+	got := connectionDetails(cluster, &corev1.Secret{}, nil)
+
+	assert.Equal(t, "my-search-client.db.svc", got.Host)
 }
 
 func TestStatus(t *testing.T) {

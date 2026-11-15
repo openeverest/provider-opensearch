@@ -38,9 +38,9 @@ var (
 )
 
 var (
-	componentsPath = field.NewPath("spec", "components")
-	enginePath     = componentsPath.Key(common.ComponentEngine)
-	dashboardsPath = componentsPath.Key(common.ComponentDashboards)
+	componentsPath   = field.NewPath("spec", "components")
+	dashboardsPath   = componentsPath.Key(common.ComponentDashboards)
+	topologyTypePath = field.NewPath("spec", "topology", "type")
 )
 
 // Validate checks the rules about the Instance alone and returns every error
@@ -55,20 +55,51 @@ var (
 func (p *Provider) Validate(in controller.ValidationInput) controller.ValidationResult {
 	inst := in.Instance
 	var errs field.ErrorList
+	var warnings []string
 
 	errs = append(errs, validateName(inst.Name)...)
 
-	engine, ok := inst.Spec.Components[common.ComponentEngine]
-	if !ok {
-		return controller.ValidationResult{Errors: append(errs, field.Required(enginePath, ""))}
+	topology := topologyOf(inst)
+	if in.Old != nil && topologyOf(in.Old) != topology {
+		errs = append(errs, field.Forbidden(topologyTypePath,
+			fmt.Sprintf("cannot be changed after creation; keep %q", topologyOf(in.Old))))
 	}
-	errs = append(errs, validateEngine(engine)...)
+	// Without a topology type the runtime does not check the component set.
+	if topology == common.TopologyStandard {
+		for _, name := range []string{common.ComponentClusterManager, common.ComponentCoordinator} {
+			if _, ok := inst.Spec.Components[name]; ok {
+				errs = append(errs, field.Forbidden(componentsPath.Key(name),
+					fmt.Sprintf("only the %s topology has this component", common.TopologyDedicated)))
+			}
+		}
+	}
+
+	for _, def := range nodePoolDefs(topology) {
+		component, ok := inst.Spec.Components[def.component]
+		if !ok {
+			if def.component == common.ComponentEngine || def.component == common.ComponentClusterManager {
+				errs = append(errs, field.Required(componentsPath.Key(def.component), ""))
+			}
+			continue
+		}
+		errs = append(errs, validateNodeComponent(def, component)...)
+	}
+
+	if manager, ok := inst.Spec.Components[common.ComponentClusterManager]; ok && topology == common.TopologyDedicated {
+		replicaErrs, warning := validateManagerReplicas(manager)
+		errs = append(errs, replicaErrs...)
+		if warning != "" {
+			warnings = append(warnings, warning)
+		}
+	}
 
 	if dashboards, ok := inst.Spec.Components[common.ComponentDashboards]; ok {
 		errs = append(errs, validateServiceType(dashboardsPath.Child("service", "serviceType"), dashboards.Service)...)
 	}
 
 	errs = append(errs, validateBackupSchedules(inst.Spec.Backup)...)
+	errs = append(errs, validateTLS(inst, in.Old)...)
+	errs = append(errs, validateUserSecretRef(inst, in.Old)...)
 
 	if in.Provider != nil {
 		spec := &in.Provider.Spec
@@ -82,13 +113,20 @@ func (p *Provider) Validate(in controller.ValidationInput) controller.Validation
 	}
 
 	if in.Old != nil {
-		if oldEngine, ok := in.Old.Spec.Components[common.ComponentEngine]; ok && oldEngine.Storage != nil && engine.Storage != nil {
-			errs = append(errs, validateStorageChange(
-				oldEngine.Storage.Size, ptr.Deref(oldEngine.Storage.StorageClass, ""), engine.Storage)...)
+		for _, def := range nodePoolDefs(topology) {
+			if def.ephemeral {
+				continue
+			}
+			oldComponent, okOld := in.Old.Spec.Components[def.component]
+			component, ok := inst.Spec.Components[def.component]
+			if okOld && ok && oldComponent.Storage != nil && component.Storage != nil {
+				errs = append(errs, validateStorageChange(componentsPath.Key(def.component),
+					oldComponent.Storage.Size, ptr.Deref(oldComponent.Storage.StorageClass, ""), component.Storage)...)
+			}
 		}
 	}
 
-	return controller.ValidationResult{Errors: errs}
+	return controller.ValidationResult{Errors: errs, Warnings: warnings}
 }
 
 func validateName(name string) field.ErrorList {
@@ -103,36 +141,58 @@ func validateName(name string) field.ErrorList {
 	return errs
 }
 
-func validateEngine(engine corev1alpha1.ComponentSpec) field.ErrorList {
+// validateNodeComponent checks a component that renders an OpenSearch node
+// pool.
+func validateNodeComponent(def nodePoolDef, component corev1alpha1.ComponentSpec) field.ErrorList {
+	path := componentsPath.Key(def.component)
 	var errs field.ErrorList
 
-	storagePath := enginePath.Child("storage", "size")
-	switch {
-	case engine.Storage == nil || engine.Storage.Size.IsZero():
-		errs = append(errs, field.Required(storagePath, ""))
-	case engine.Storage.Size.Cmp(minStorage) < 0:
-		errs = append(errs, field.Invalid(storagePath, engine.Storage.Size.String(),
-			fmt.Sprintf("must be at least %s", minStorage.String())))
+	if !def.ephemeral {
+		storagePath := path.Child("storage", "size")
+		switch {
+		case component.Storage == nil || component.Storage.Size.IsZero():
+			errs = append(errs, field.Required(storagePath, ""))
+		case component.Storage.Size.Cmp(minStorage) < 0:
+			errs = append(errs, field.Invalid(storagePath, component.Storage.Size.String(),
+				fmt.Sprintf("must be at least %s", minStorage.String())))
+		}
 	}
 
-	if r := engine.Resources; r != nil {
+	if r := component.Resources; r != nil {
 		res := nodeResources(r)
 		if cpu, ok := res.Requests[corev1.ResourceCPU]; ok && cpu.Cmp(minCPU) < 0 {
-			errs = append(errs, field.Invalid(enginePath.Child("resources", "requests", "cpu"), cpu.String(),
+			errs = append(errs, field.Invalid(path.Child("resources", "requests", "cpu"), cpu.String(),
 				fmt.Sprintf("must be at least %s", minCPU.String())))
 		}
 		if mem, ok := res.Requests[corev1.ResourceMemory]; ok && mem.Cmp(minMemory) < 0 {
-			errs = append(errs, field.Invalid(enginePath.Child("resources", "requests", "memory"), mem.String(),
+			errs = append(errs, field.Invalid(path.Child("resources", "requests", "memory"), mem.String(),
 				fmt.Sprintf("must be at least %s, half of it is the JVM heap", minMemory.String())))
 		}
 	}
 
-	if _, err := resolveAdditionalConfig(engine); err != nil {
-		errs = append(errs, field.Invalid(enginePath.Child("parameters", "configuration"), "", err.Error()))
+	if _, err := resolveAdditionalConfig(component); err != nil {
+		errs = append(errs, field.Invalid(path.Child("parameters", "configuration"), "", err.Error()))
 	}
 
-	errs = append(errs, validateServiceType(enginePath.Child("service", "serviceType"), engine.Service)...)
+	errs = append(errs, validateServiceType(path.Child("service", "serviceType"), component.Service)...)
 	return errs
+}
+
+// validateManagerReplicas requires an odd number of cluster managers: an even
+// count tolerates no more failures than one node fewer. A single one is
+// allowed but has no failover.
+func validateManagerReplicas(manager corev1alpha1.ComponentSpec) (field.ErrorList, string) {
+	replicas := ptr.Deref(manager.Replicas, defaultReplicas)
+	path := componentsPath.Key(common.ComponentClusterManager).Child("replicas")
+	if replicas%2 == 0 {
+		return field.ErrorList{field.Invalid(path, replicas,
+			"must be odd (1, 3, 5, ...) so the cluster managers keep a voting majority")}, ""
+	}
+	if replicas == 1 {
+		return nil, "a single cluster manager has no failover: the cluster stops accepting writes " +
+			"while it restarts; use 3 for production"
+	}
+	return nil, ""
 }
 
 // validateBackupSchedules rejects a schedule name that cannot form a valid
@@ -219,14 +279,14 @@ func validateVersionChange(from, to string) field.ErrorList {
 
 // validateStorageChange rejects shrinking the volumes and changing their
 // StorageClass, neither of which a StatefulSet can do in place.
-func validateStorageChange(currentSize resource.Quantity, currentClass string, requested *corev1alpha1.Storage) field.ErrorList {
+func validateStorageChange(path *field.Path, currentSize resource.Quantity, currentClass string, requested *corev1alpha1.Storage) field.ErrorList {
 	var errs field.ErrorList
 	if requested.Size.Cmp(currentSize) < 0 {
-		errs = append(errs, field.Forbidden(enginePath.Child("storage", "size"),
+		errs = append(errs, field.Forbidden(path.Child("storage", "size"),
 			fmt.Sprintf("cannot be decreased from %s to %s", currentSize.String(), requested.Size.String())))
 	}
 	if requestedClass := ptr.Deref(requested.StorageClass, ""); requestedClass != currentClass {
-		errs = append(errs, field.Forbidden(enginePath.Child("storage", "storageClass"),
+		errs = append(errs, field.Forbidden(path.Child("storage", "storageClass"),
 			fmt.Sprintf("cannot be changed after creation; keep %q", currentClass)))
 	}
 	return errs
@@ -241,6 +301,16 @@ func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, e
 	if err != nil {
 		return nil, err
 	}
+	userErrs, err := validateUserSecret(c)
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, userErrs...)
+	tlsErrs, err := validateTLSReferences(c)
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, tlsErrs...)
 
 	existing := &opensearchv1.OpenSearchCluster{}
 	if err := c.Get(existing, c.Name()); err != nil {
@@ -256,23 +326,39 @@ func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, e
 	}
 	requested := resolveComponentVersion(spec, c.Instance(), common.ComponentEngine, common.ComponentTypeOpensearch)
 	errs = append(errs, validateVersionChange(existing.Status.Version, requested)...)
+	securityErrs, err := validateSecurityMatches(existing, c.Instance())
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, securityErrs...)
 
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	if engine.Storage == nil {
+	topology := topologyOf(c.Instance())
+	if errs := validateTopologyMatches(existing, topology); len(errs) > 0 {
 		return errs, nil
 	}
+
+	defs := map[string]nodePoolDef{}
+	for _, def := range nodePoolDefs(topology) {
+		defs[def.pool] = def
+	}
 	for _, pool := range existing.Spec.NodePools {
-		if pool.Component != nodePoolName {
+		def, ok := defs[pool.Component]
+		if !ok || def.ephemeral {
 			continue
 		}
+		component, ok := c.Instance().Spec.Components[def.component]
+		if !ok || component.Storage == nil {
+			continue
+		}
+		path := componentsPath.Key(def.component)
 		var currentClass *string
 		if pool.Persistence != nil && pool.Persistence.PVC != nil {
 			currentClass = pool.Persistence.PVC.StorageClassName
 		}
-		changeErrs := validateStorageChange(pool.DiskSize, ptr.Deref(currentClass, ""), engine.Storage)
+		changeErrs := validateStorageChange(path, pool.DiskSize, ptr.Deref(currentClass, ""), component.Storage)
 		errs = append(errs, changeErrs...)
-		if len(changeErrs) == 0 && engine.Storage.Size.Cmp(pool.DiskSize) > 0 {
-			expandErrs, err := validateStorageExpansion(c, currentClass)
+		if len(changeErrs) == 0 && component.Storage.Size.Cmp(pool.DiskSize) > 0 {
+			expandErrs, err := validateStorageExpansion(c, path, currentClass)
 			if err != nil {
 				return nil, err
 			}
@@ -280,6 +366,23 @@ func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, e
 		}
 	}
 	return errs, nil
+}
+
+// validateTopologyMatches rejects a topology other than the one the running
+// cluster was created with, told apart by the standard topology's node pool.
+// Switching would replace every node pool and lose the data.
+func validateTopologyMatches(existing *opensearchv1.OpenSearchCluster, topology string) field.ErrorList {
+	current := common.TopologyDedicated
+	for _, pool := range existing.Spec.NodePools {
+		if pool.Component == nodePoolName {
+			current = common.TopologyStandard
+		}
+	}
+	if current == topology {
+		return nil
+	}
+	return field.ErrorList{field.Forbidden(topologyTypePath,
+		fmt.Sprintf("cannot be changed after creation; keep %q", current))}
 }
 
 // validateBackupStorages rejects a backup storage the snapshot repository
@@ -315,13 +418,13 @@ func validateBackupStorages(c *controller.Context) (field.ErrorList, error) {
 // StorageClass is cluster-scoped, so this goes through c.Client() directly:
 // c.Get/c.List always scope to the Instance's namespace, which would never
 // match a cluster-scoped object.
-func validateStorageExpansion(c *controller.Context, className *string) (field.ErrorList, error) {
+func validateStorageExpansion(c *controller.Context, path *field.Path, className *string) (field.ErrorList, error) {
 	var sc *storagev1.StorageClass
 	if name := ptr.Deref(className, ""); name != "" {
 		sc = &storagev1.StorageClass{}
 		if err := c.Client().Get(c.Context(), client.ObjectKey{Name: name}, sc); err != nil {
 			if apierrors.IsNotFound(err) {
-				return field.ErrorList{field.NotFound(enginePath.Child("storage", "storageClass"), name)}, nil
+				return field.ErrorList{field.NotFound(path.Child("storage", "storageClass"), name)}, nil
 			}
 			return nil, fmt.Errorf("get storage class %q: %w", name, err)
 		}
@@ -338,7 +441,7 @@ func validateStorageExpansion(c *controller.Context, className *string) (field.E
 	}
 
 	if !ptr.Deref(sc.AllowVolumeExpansion, false) {
-		return field.ErrorList{field.Forbidden(enginePath.Child("storage", "size"),
+		return field.ErrorList{field.Forbidden(path.Child("storage", "size"),
 			fmt.Sprintf("storage class %q does not allow volume expansion", sc.Name))}, nil
 	}
 	return nil, nil

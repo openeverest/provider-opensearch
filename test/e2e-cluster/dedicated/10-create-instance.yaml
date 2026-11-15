@@ -1,0 +1,34 @@
+# The smallest dedicated cluster: one node per role keeps it within a CI
+# runner. A single cluster manager is accepted with a warning.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+spec:
+  providerRef:
+    name: opensearch
+  topology:
+    type: dedicated
+  components:
+    clusterManager:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "500m"
+          memory: 2Gi
+      storage:
+        size: 2Gi
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "500m"
+          memory: 2Gi
+      storage:
+        size: 5Gi
+    coordinator:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "500m"
+          memory: 2Gi

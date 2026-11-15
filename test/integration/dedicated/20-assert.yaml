@@ -1,0 +1,18 @@
+# Without coordinators the data nodes serve clients, under the same name.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  nodePools:
+    - component: managers
+    - component: data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-instance-client
+spec:
+  selector:
+    opensearch.org/opensearch-cluster: test-instance
+    opensearch.org/opensearch-nodepool: data

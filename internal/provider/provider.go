@@ -69,16 +69,26 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	in := c.Instance()
+	topology := topologyOf(in)
+	engine := in.Spec.Components[common.ComponentEngine]
 	version := resolveVersion(spec, engine, common.ComponentTypeOpensearch)
 	image := engine.Image
 	if image == "" {
 		image = controller.GetImageForVersion(spec, common.ComponentEngine, version)
 	}
 
-	additionalConfig, err := resolveAdditionalConfig(engine)
-	if err != nil {
-		return fmt.Errorf("%s: configuration: %w", common.ComponentEngine, err)
+	configs := map[string]map[string]string{}
+	for _, def := range nodePoolDefs(topology) {
+		component, ok := in.Spec.Components[def.component]
+		if !ok {
+			continue
+		}
+		config, err := resolveAdditionalConfig(component)
+		if err != nil {
+			return fmt.Errorf("%s: configuration: %w", def.component, err)
+		}
+		configs[def.component] = config
 	}
 
 	snapshotRepos, keystore, backupPlugins, err := buildBackupConfig(c)
@@ -86,9 +96,35 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	tlsParams, err := instanceTLSParameters(in)
+	if err != nil {
+		return err
+	}
+	customHTTP, err := syncHTTPCertificate(c, tlsParams, topology)
+	if err != nil {
+		return err
+	}
+	adminCredentials, err := ensureAdminCredentials(c)
+	if err != nil {
+		return err
+	}
+
 	cluster := &opensearchv1.OpenSearchCluster{
 		ObjectMeta: c.ObjectMeta(c.Name()),
-		Spec:       buildClusterSpec(c.Name(), engine, version, image, additionalConfig, snapshotRepos, keystore, backupPlugins),
+		Spec: buildClusterSpec(clusterInputs{
+			name:             c.Name(),
+			namespace:        c.Namespace(),
+			topology:         topology,
+			components:       in.Spec.Components,
+			configs:          configs,
+			version:          version,
+			image:            image,
+			snapshotRepos:    snapshotRepos,
+			keystore:         keystore,
+			backupPlugins:    backupPlugins,
+			customHTTP:       customHTTP,
+			adminCredentials: adminCredentials,
+		}),
 	}
 
 	// Apply replaces metadata wholesale; keep the operator's finalizer so it
@@ -116,7 +152,13 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	if err := syncExposedService(c, engine); err != nil {
+	selector := clientPodSelector(c.Name(), topology, in.Spec.Components)
+	if topology == common.TopologyDedicated {
+		if err := syncClientService(c, selector); err != nil {
+			return err
+		}
+	}
+	if err := syncExposedService(c, engine, selector); err != nil {
 		return err
 	}
 
@@ -181,12 +223,17 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	var details controller.ConnectionDetails
 	if cluster.Status.Initialized {
 		secret := &corev1.Secret{}
-		if err := c.Get(secret, adminSecretName(c.Name())); err != nil {
+		if err := c.Get(secret, adminCredentialsSecretName(c.Instance())); err != nil {
 			// Also returned for NotFound: an error requeues, while the secret's
 			// creation alone would not trigger another reconcile.
 			return controller.Status{}, fmt.Errorf("get admin credentials secret: %w", err)
 		}
-		details = connectionDetails(cluster, secret)
+		// The CA is published once it exists; a later Status adds it.
+		ca, err := clientCA(c)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return controller.Status{}, err
+		}
+		details = connectionDetails(cluster, secret, ca)
 		if host, err := externalHost(c); err != nil {
 			return controller.Status{}, err
 		} else if host != "" {
