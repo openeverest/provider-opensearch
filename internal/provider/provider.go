@@ -159,12 +159,15 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 
 	// A held provider-initiated change leaves the cluster as it is; the rest
-	// of the Instance is still kept in sync.
-	backupInputs := struct {
-		Repos    []opensearchv1.SnapshotRepoConfig `json:"repos,omitempty"`
-		Keystore []opensearchv1.KeystoreValue      `json:"keystore,omitempty"`
-	}{snapshotRepos, keystore}
-	if err := applyClusterGated(c, cluster, exists, backupInputs); err != nil {
+	// of the Instance is still kept in sync. Enabling requested Dashboards
+	// once the cluster is initialized carries out the user's request, so it
+	// counts as an input rather than a provider-initiated change.
+	otherInputs := struct {
+		Repos             []opensearchv1.SnapshotRepoConfig `json:"repos,omitempty"`
+		Keystore          []opensearchv1.KeystoreValue      `json:"keystore,omitempty"`
+		DashboardsEnabled bool                              `json:"dashboardsEnabled,omitempty"`
+	}{snapshotRepos, keystore, cluster.Spec.Dashboards.Enable}
+	if err := applyClusterGated(c, cluster, exists, otherInputs); err != nil {
 		return err
 	}
 

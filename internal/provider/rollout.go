@@ -42,9 +42,9 @@ func rolloutStateName(instanceName string) string {
 // provider-owned Secret. A cluster without a record was last applied by a
 // provider predating this gate: it is applied and recorded as the baseline.
 //
-// userInputs carries the rendering inputs that come from user-owned objects
-// other than the Instance (the backup storages), so editing them counts as a
-// user change too.
+// userInputs carries the rendering inputs that do not come from the Instance
+// itself: the backup storages, and whether requested Dashboards are enabled
+// yet. Changes to them count as user changes too.
 func applyClusterGated(c *controller.Context, cluster *opensearchv1.OpenSearchCluster, exists bool, userInputs any) error {
 	record := map[string]string{}
 	state := &corev1.Secret{}
