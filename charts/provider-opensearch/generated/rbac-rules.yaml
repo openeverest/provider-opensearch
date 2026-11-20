@@ -18,6 +18,15 @@
 - apiGroups:
     - ""
   resources:
+    - persistentvolumeclaims
+    - pods
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - ""
+  resources:
     - secrets
     - services
   verbs:
@@ -42,6 +51,14 @@
     - deployments
   verbs:
     - delete
+    - get
+    - list
+    - watch
+- apiGroups:
+    - apps
+  resources:
+    - statefulsets
+  verbs:
     - get
     - list
     - watch

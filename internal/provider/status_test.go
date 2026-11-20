@@ -1,20 +1,26 @@
 package provider
 
 import (
+	"fmt"
 	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+
+	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
 func testCluster(replicas int32, st opensearchv1.ClusterStatus) *opensearchv1.OpenSearchCluster {
@@ -30,65 +36,115 @@ func testCluster(replicas int32, st opensearchv1.ClusterStatus) *opensearchv1.Op
 
 func TestClusterStatus(t *testing.T) {
 	details := controller.ConnectionDetails{Host: "h"}
+	want := clusterWant{version: "3.8.0", nodes: 3}
+	running := func(nodes int32, health opensearchv1.OpenSearchHealth) opensearchv1.ClusterStatus {
+		return opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, Version: "3.8.0", AvailableNodes: nodes, Health: health}
+	}
 	tests := []struct {
 		name      string
 		status    opensearchv1.ClusterStatus
-		converged bool
-		details   bool
+		want      clusterWant
+		nodes     nodeRollout
+		waiting   bool
+		available controller.Availability
+		operation string
+		problem   string
 	}{
 		{
-			name:      "not initialized",
-			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning},
-			converged: false,
+			name:    "not initialized",
+			status:  opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning},
+			waiting: true,
 		},
 		{
 			name:      "green",
-			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth},
-			converged: true,
-			details:   true,
+			status:    running(3, opensearchv1.OpenSearchGreenHealth),
+			available: controller.Available,
 		},
 		{
-			name:      "yellow",
-			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchYellowHealth},
-			converged: true,
-			details:   true,
+			name:      "yellow serves reads and writes",
+			status:    running(3, opensearchv1.OpenSearchYellowHealth),
+			available: controller.Available,
 		},
 		{
 			name:      "red",
-			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchRedHealth},
-			converged: false,
-			details:   true,
+			status:    running(3, opensearchv1.OpenSearchRedHealth),
+			waiting:   true,
+			available: controller.Unavailable,
+			problem:   reasonPrimaryShardsUnassigned,
 		},
 		{
-			name:      "upgrading",
-			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseUpgrading, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth},
-			converged: false,
-			details:   true,
+			name:      "health not reported",
+			status:    running(3, ""),
+			waiting:   true,
+			available: controller.AvailabilityUnknown,
+		},
+		{
+			name: "upgrading",
+			status: opensearchv1.ClusterStatus{
+				Phase: opensearchv1.PhaseUpgrading, Initialized: true, Version: "3.7.0", AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
+			},
+			waiting:   true,
+			available: controller.Available,
+			operation: corev1alpha1.ConditionUpgrading,
+		},
+		{
+			// The operator has not picked up the new version yet: the cached
+			// cluster can still be from before Sync applied it.
+			name:      "version not reached yet",
+			status:    running(3, opensearchv1.OpenSearchGreenHealth),
+			want:      clusterWant{version: "3.9.0", nodes: 3},
+			waiting:   true,
+			available: controller.Available,
+			operation: corev1alpha1.ConditionUpgrading,
 		},
 		{
 			// Between two node restarts every node is up and the cluster green.
 			name: "rolling restart in progress",
-			status: opensearchv1.ClusterStatus{
-				Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
-				ComponentsStatus: []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "InProgress"}},
-			},
-			converged: false,
-			details:   true,
+			status: func() opensearchv1.ClusterStatus {
+				st := running(3, opensearchv1.OpenSearchGreenHealth)
+				st.ComponentsStatus = []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "InProgress"}}
+				return st
+			}(),
+			waiting:   true,
+			available: controller.Available,
 		},
 		{
 			name: "rolling restart finished",
-			status: opensearchv1.ClusterStatus{
-				Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
-				ComponentsStatus: []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "Finished"}},
-			},
-			converged: true,
-			details:   true,
+			status: func() opensearchv1.ClusterStatus {
+				st := running(3, opensearchv1.OpenSearchGreenHealth)
+				st.ComponentsStatus = []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "Finished"}}
+				return st
+			}(),
+			available: controller.Available,
 		},
 		{
-			name:      "scaling",
-			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 2, Health: opensearchv1.OpenSearchGreenHealth},
-			converged: false,
-			details:   true,
+			// A pinned image: the operator reports the new version at once and
+			// restarts the nodes one by one.
+			name:      "nodes still on another image",
+			status:    running(3, opensearchv1.OpenSearchGreenHealth),
+			nodes:     nodeRollout{staleImage: 2},
+			waiting:   true,
+			available: controller.Available,
+			operation: corev1alpha1.ConditionUpgrading,
+		},
+		{
+			name:      "nodes not on the StatefulSet's latest revision",
+			status:    running(3, opensearchv1.OpenSearchGreenHealth),
+			nodes:     nodeRollout{restarting: 1},
+			waiting:   true,
+			available: controller.Available,
+		},
+		{
+			name:      "scaling up",
+			status:    running(2, opensearchv1.OpenSearchGreenHealth),
+			waiting:   true,
+			available: controller.Available,
+		},
+		{
+			name:      "scaling down",
+			status:    running(4, opensearchv1.OpenSearchGreenHealth),
+			waiting:   true,
+			available: controller.Available,
 		},
 	}
 	for _, tt := range tests {
@@ -97,11 +153,24 @@ func TestClusterStatus(t *testing.T) {
 			if tt.status.Initialized {
 				d = details
 			}
+			w := want
+			if tt.want != (clusterWant{}) {
+				w = tt.want
+			}
 
-			got := clusterStatus(testCluster(3, tt.status), d)
+			got := clusterStatus(testCluster(3, tt.status), w, tt.nodes, d)
 
-			assert.Equal(t, tt.converged, got.Converged)
-			assert.Equal(t, tt.details, !got.ConnectionDetails.IsEmpty())
+			assert.Equal(t, tt.waiting, got.Message != "", "message %q", got.Message)
+			assert.Equal(t, tt.available, got.Available)
+			assert.Equal(t, tt.operation, operationTypes(got))
+			if tt.problem == "" {
+				assert.Empty(t, got.Problems)
+			} else {
+				require.Len(t, got.Problems, 1)
+				assert.Equal(t, tt.problem, got.Problems[0].Reason)
+				assert.False(t, got.Problems[0].Terminal)
+			}
+			assert.Equal(t, tt.status.Initialized, !got.ConnectionDetails.IsEmpty())
 		})
 	}
 }
@@ -216,7 +285,9 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
+		assert.False(t, got.Converged)
 		assert.Equal(t, corev1alpha1.ConditionRestoring, operationTypes(got))
+		assert.Equal(t, controller.Unavailable, got.Available)
 		assert.Equal(t, "secret", got.ConnectionDetails.Password)
 	})
 
@@ -240,47 +311,82 @@ func TestStatus(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("data source restoring overrides a ready cluster", func(t *testing.T) {
-		cluster := testCluster(3, opensearchv1.ClusterStatus{
-			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
-		})
-		c, _ := newTestContext(t, testInstance(validEngine()), cluster)
+	seeded := func() *corev1alpha1.Instance {
+		in := testInstance(validEngine())
+		in.Spec.DataSource = &backupv1alpha1.DataSource{
+			Type:   backupv1alpha1.DataSourceTypeBackup,
+			Backup: &backupv1alpha1.DataSourceBackup{BackupRef: commonv1alpha1.ObjectRef{Name: "my-backup"}},
+		}
+		return in
+	}
+
+	t.Run("seeding from the data source has not converged", func(t *testing.T) {
+		c, _ := newTestContext(t, seeded(), readyCluster(), adminSecret())
 		c.SetDataSourceStatus(controller.DataSourceStatus{Done: false, Message: "restoring from backup"})
 
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.ConditionRestoring, operationTypes(got))
+		assert.False(t, got.Converged)
+		// The runtime reports the seeding restore itself.
+		assert.Empty(t, got.Operations)
 	})
 
-	t.Run("data source failed overrides a ready cluster", func(t *testing.T) {
-		cluster := testCluster(3, opensearchv1.ClusterStatus{
-			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
-		})
-		c, _ := newTestContext(t, testInstance(validEngine()), cluster)
+	t.Run("failed seeding is reported by the runtime", func(t *testing.T) {
+		c, _ := newTestContext(t, seeded(), readyCluster(), adminSecret())
 		c.SetDataSourceStatus(controller.DataSourceStatus{Done: true, State: controller.DataSourceStateFailed, Message: "source backup not found"})
 
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.NotEmpty(t, got.Problems)
+		assert.True(t, got.Converged)
+		assert.Empty(t, got.Problems)
 	})
 
 	t.Run("data source succeeded does not override", func(t *testing.T) {
-		cluster := testCluster(3, opensearchv1.ClusterStatus{
-			Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
-		})
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: adminSecretName(testName), Namespace: testNamespace},
-			Data:       map[string][]byte{"username": []byte("admin"), "password": []byte("secret")},
-		}
-		c, _ := newTestContext(t, testInstance(validEngine()), cluster, secret)
+		c, _ := newTestContext(t, seeded(), readyCluster(), adminSecret())
 		c.SetDataSourceStatus(controller.DataSourceStatus{Done: true, State: controller.DataSourceStateSucceeded})
 
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
 		assert.True(t, got.Converged)
+	})
+
+	t.Run("volumes not grown to the requested size report StorageResizing", func(t *testing.T) {
+		engine := validEngine()
+		engine.Storage.Size = resource.MustParse("20Gi")
+		pvc := func(ordinal int, capacity string) *corev1.PersistentVolumeClaim {
+			return &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("data-%s-%s-%d", testName, nodePoolName, ordinal), Namespace: testNamespace},
+				Status: corev1.PersistentVolumeClaimStatus{Capacity: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse(capacity),
+				}},
+			}
+		}
+		c, _ := newTestContext(t, testInstance(engine), readyCluster(), adminSecret(), pvc(0, "20Gi"), pvc(1, "10Gi"))
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.False(t, got.Converged)
+		assert.Equal(t, corev1alpha1.ConditionStorageResizing, operationTypes(got))
+		assert.Contains(t, got.Operations[0].Message, pvc(1, "10Gi").Name)
+		assert.Equal(t, controller.Available, got.Available)
+	})
+
+	t.Run("desired replicas per component", func(t *testing.T) {
+		in := testInstance(validEngine())
+		in.Spec.Components[common.ComponentDashboards] = corev1alpha1.ComponentSpec{}
+		c, _ := newTestContext(t, in)
+
+		got, err := New().Status(c)
+
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []controller.ComponentReplicas{
+			{Component: common.ComponentEngine, Desired: 3},
+			{Component: common.ComponentDashboards, Desired: 1},
+		}, got.DesiredReplicas)
 	})
 }
 
@@ -290,4 +396,34 @@ func operationTypes(s controller.Status) string {
 		return ""
 	}
 	return s.Operations[0].Type
+}
+
+func TestObserveNodes(t *testing.T) {
+	cluster := testCluster(3, opensearchv1.ClusterStatus{})
+	cluster.Spec.General.ImageSpec = &opensearchv1.ImageSpec{Image: ptr.To("opensearchproject/opensearch:3.8.0")}
+	pod := func(name, image string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace, Labels: map[string]string{
+				clusterLabel: testName, nodePoolLabel: nodePoolName,
+			}},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: opensearchContainer, Image: image}}},
+		}
+	}
+	bootstrap := pod("bootstrap", "opensearchproject/opensearch:3.7.0")
+	delete(bootstrap.Labels, nodePoolLabel)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: testName + "-" + nodePoolName, Namespace: testNamespace, Generation: 2},
+		Spec:       appsv1.StatefulSetSpec{Replicas: ptr.To[int32](3)},
+		Status:     appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1},
+	}
+	c, _ := newTestContext(t, testInstance(validEngine()), cluster,
+		pod("n0", "opensearchproject/opensearch:3.8.0"),
+		pod("n1", "opensearchproject/opensearch:3.7.0"),
+		pod("n2", "opensearchproject/opensearch:3.7.0"),
+		bootstrap, sts)
+
+	got, err := observeNodes(c, cluster)
+
+	require.NoError(t, err)
+	assert.Equal(t, nodeRollout{staleImage: 2, restarting: 2}, got)
 }

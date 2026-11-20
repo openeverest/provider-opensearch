@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -227,24 +228,17 @@ func resolveVersion(spec *corev1alpha1.ProviderSpec, component corev1alpha1.Comp
 	return ""
 }
 
-// Status translates the OpenSearchCluster status into the Instance status.
+// Status reports what the provider observes about the cluster: whether it
+// runs what the Instance asks for, whether clients can connect, what is wrong
+// and which long operation is running, and how many pods each component will
+// have. The runtime derives the Instance's phase and conditions from these
+// facts.
 func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
-	// While the initial seeding from .spec.dataSource has not reached a
-	// terminal state, surface that instead of the cluster's own health:
-	// the cluster itself can be green while restore is still in progress.
-	if ds := c.GetDataSourceStatus(); ds != nil {
-		if !ds.Done {
-			return controller.Restoring(ds.Message), nil
-		}
-		if ds.State == controller.DataSourceStateFailed {
-			return controller.Failed(ds.Message), nil
-		}
-	}
-
+	in := c.Instance()
 	cluster := &opensearchv1.OpenSearchCluster{}
 	if err := c.Get(cluster, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {
-			return controller.Progressing("Waiting for OpenSearchCluster to be created"), nil
+			return withDesiredReplicas(in, controller.Progressing("Waiting for OpenSearchCluster to be created")), nil
 		}
 		return controller.Status{}, err
 	}
@@ -252,7 +246,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	var details controller.ConnectionDetails
 	if cluster.Status.Initialized {
 		secret := &corev1.Secret{}
-		if err := c.Get(secret, adminCredentialsSecretName(c.Instance())); err != nil {
+		if err := c.Get(secret, adminCredentialsSecretName(in)); err != nil {
 			// Also returned for NotFound: an error requeues, while the secret's
 			// creation alone would not trigger another reconcile.
 			return controller.Status{}, fmt.Errorf("get admin credentials secret: %w", err)
@@ -270,19 +264,46 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		}
 	}
 
-	status := clusterStatus(cluster, details)
-	if status.Converged {
-		restoring, err := activeRestore(c)
-		if err != nil {
-			return controller.Status{}, err
-		}
-		if restoring != "" {
-			restoringStatus := controller.Restoring(fmt.Sprintf("Restoring from Restore %q", restoring))
-			restoringStatus.ConnectionDetails = details
-			return restoringStatus, nil
+	want, err := wantedCluster(c)
+	if err != nil {
+		return controller.Status{}, err
+	}
+	nodes, err := observeNodes(c, cluster)
+	if err != nil {
+		return controller.Status{}, err
+	}
+	status := clusterStatus(cluster, want, nodes, details)
+
+	resizing, err := resizingVolumes(c)
+	if err != nil {
+		return controller.Status{}, err
+	}
+	if resizing != "" {
+		status = status.WithOperation(corev1alpha1.ConditionStorageResizing, reasonResizingVolumes, resizing)
+		status.Message = cmp.Or(status.Message, resizing)
+	}
+
+	// The runtime reports the seeding of a new Instance from its data source
+	// itself, as a restore, and its failure on DataSourceReady.
+	if ds := in.Spec.DataSource; ds != nil {
+		if s := c.GetDataSourceStatus(); s == nil || !s.Done {
+			status.Message = cmp.Or(status.Message, "Restoring the backup of the data source")
 		}
 	}
-	return status, nil
+
+	restoring, err := activeRestore(c)
+	if err != nil {
+		return controller.Status{}, err
+	}
+	if restoring != "" {
+		message := fmt.Sprintf("Restoring from Restore %q", restoring)
+		status = status.WithOperation(corev1alpha1.ConditionRestoring, reasonRestoringSnapshot, message).
+			WithUnavailable(reasonRestoringSnapshot, "The indices being restored are closed until the restore finishes")
+		status.Message = cmp.Or(status.Message, message)
+	}
+
+	status.Converged = status.Message == ""
+	return withDesiredReplicas(in, status), nil
 }
 
 // restoreInstance maps a Restore to the Instance it restores into.

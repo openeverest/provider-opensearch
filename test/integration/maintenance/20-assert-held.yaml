@@ -5,7 +5,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
 status:
-  (length(pendingMaintenance)): 1
+  (length(pendingMaintenance || `[]`)): 1
   pendingMaintenance:
     - severity: RollingRestart
       (starts_with(approvalToken, 'provider-')): true

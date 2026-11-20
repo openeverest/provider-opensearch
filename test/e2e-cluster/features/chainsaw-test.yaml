@@ -82,7 +82,8 @@ spec:
               spec:
                 version: "3.8.0"
         # The operator restarts the nodes one by one, waiting for green
-        # health in between; the Instance reports it as an update.
+        # health in between; the Instance reports the Upgrading operation and stays
+        # available.
         - assert:
             timeout: 5m
             resource:
@@ -92,7 +93,8 @@ spec:
                 name: test-instance
               status:
                 phase: Provisioned
-                (conditions[?type == 'Ready'].status | [0]): "False"
+                (conditions[?type == 'Upgrading'].status | [0]): "True"
+                (conditions[?type == 'Available'].status | [0]): "True"
         - assert:
             file: 40-assert.yaml
             timeout: 30m
