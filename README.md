@@ -333,11 +333,17 @@ Worth knowing:
   no UI form field for it yet (API/CLI only), matching the only other optional-component
   precedent in the OpenEverest ecosystem. Credentials live in the
   `<name>-dashboards-password` secret.
-- **Backups (on demand)** — register an S3-compatible `BackupStorage` on the Instance via
-  `spec.backup.storages[]`; the provider maps it onto `general.snapshotRepositories` and
-  `general.keystore` and adds `repository-s3` to `pluginsList` (enabling backups restarts the
-  nodes once). Each Instance writes under its own path in the bucket, `<namespace>/<instance>`,
-  so Instances can share a `BackupStorage`. A `Backup` CR targeting the
+- **Backups (on demand)** — register a `BackupStorage` of the `s3` BackupStorageClass on the
+  Instance via `spec.backup.storages[]`; the provider maps it onto
+  `general.snapshotRepositories` and `general.keystore` and adds `repository-s3` to
+  `pluginsList` (enabling backups restarts the nodes once). Each Instance writes under its own
+  path in the bucket, `<prefix>/backups/<namespace>/<instance>/<uid>/<storage>`, so Instances
+  can share a `BackupStorage`. The `opensearch-snapshot` class accepts `AccessKey`
+  authentication and the `aws`, `minio`, `ceph` and `other` implementations; `repository-s3`
+  cannot use GCS through S3, and has no custom CA or `insecureSkipVerify` setting, so a storage
+  with `spec.tls` is not compatible. A storage that cannot be used keeps the repository the
+  cluster already has for it and is reported on the `BackupConfigured` condition; the other
+  storages are not affected. A `Backup` CR targeting the
   `opensearch-snapshot` BackupClass then drives a real OpenSearch snapshot through the
   cluster's own REST API — the operator has no backup CR of its own. Deleting the `Backup` CR
   deletes the snapshot unless `deletionPolicy: Retain` is set.
@@ -355,7 +361,9 @@ Worth knowing:
   roles and admin credentials. The Instance reports `Restoring` while it runs. The same path
   seeds a new Instance: set `spec.dataSource` to a `Backup` and the runtime creates the restore
   once the cluster is running. A backup of another Instance is read through a read-only
-  repository, which needs the backup's storage in the new Instance's `spec.backup.storages`.
+  repository at the path the `Backup` recorded, so it still resolves once the source
+  Instance is gone; it needs the backup's storage in the new Instance's
+  `spec.backup.storages`.
   Point-in-time recovery is not supported.
 
 ## Development

@@ -138,9 +138,10 @@ func clusterReady(c *controller.Context) (bool, error) {
 
 // sourceRepository returns the repository, on this cluster, that holds
 // backup's snapshot. A backup of this Instance is in its own repository for
-// the storage. A backup of another Instance is under that Instance's base
-// path, so it is exposed through a read-only repository the provider
-// registers: two clusters must never write to the same repository.
+// the storage. A backup of another Instance is under the path that Backup
+// recorded, so it is exposed through a read-only repository the provider
+// registers: two clusters must never write to the same repository. The path
+// still resolves once the source Instance is gone.
 func sourceRepository(c *controller.Context, osClient *openSearchClient, backup *backupv1alpha1.Backup) (string, error) {
 	storage, origin := backup.Spec.StorageRef.Name, backupOrigin(backup)
 	if origin == "" || origin == c.Name() {
@@ -151,7 +152,11 @@ func sourceRepository(c *controller.Context, osClient *openSearchClient, backup 
 	if err != nil {
 		return "", fmt.Errorf("backup storage %q: %w", storage, err)
 	}
-	settings, err := s3RepositorySettings(bs, repositoryBasePath(backup.Namespace, origin))
+	basePath := c.BackupLocation(backup, bs)
+	if basePath == "" {
+		return "", fmt.Errorf("backup %q has not recorded its path yet", backup.Name)
+	}
+	settings, err := s3RepositorySettings(c, bs, basePath)
 	if err != nil {
 		return "", err
 	}

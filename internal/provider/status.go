@@ -20,7 +20,7 @@ import (
 func clusterStatus(cluster *opensearchv1.OpenSearchCluster, details controller.ConnectionDetails) controller.Status {
 	st := cluster.Status
 	if !st.Initialized {
-		return controller.Provisioning("OpenSearch cluster is bootstrapping")
+		return controller.Progressing("OpenSearch cluster is bootstrapping")
 	}
 
 	var desired int32
@@ -31,13 +31,13 @@ func clusterStatus(cluster *opensearchv1.OpenSearchCluster, details controller.C
 	var s controller.Status
 	switch {
 	case st.Phase == opensearchv1.PhaseUpgrading:
-		s = controller.Updating("Upgrading OpenSearch to " + cluster.Spec.General.Version)
+		s = controller.Progressing("Upgrading OpenSearch to " + cluster.Spec.General.Version)
 	case st.AvailableNodes < desired:
-		s = controller.Updating(fmt.Sprintf("%d of %d nodes available", st.AvailableNodes, desired))
+		s = controller.Progressing(fmt.Sprintf("%d of %d nodes available", st.AvailableNodes, desired))
 	case rollingRestartInProgress(st):
 		// Between two node restarts every node can be up and the cluster
 		// green, while the operator still has nodes to restart.
-		s = controller.Updating("Restarting nodes to apply configuration changes")
+		s = controller.Progressing("Restarting nodes to apply configuration changes")
 	case st.Health == opensearchv1.OpenSearchGreenHealth:
 		s = controller.Ready()
 	case st.Health == opensearchv1.OpenSearchYellowHealth:
@@ -46,7 +46,7 @@ func clusterStatus(cluster *opensearchv1.OpenSearchCluster, details controller.C
 		s = controller.Ready()
 		s.Message = "Cluster health is yellow: some replica shards are unassigned"
 	default:
-		s = controller.Updating(fmt.Sprintf("Cluster health is %q", healthOrUnknown(st.Health)))
+		s = controller.Progressing(fmt.Sprintf("Cluster health is %q", healthOrUnknown(st.Health)))
 	}
 	s.ConnectionDetails = details
 	return s

@@ -15,7 +15,6 @@ import (
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
-	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
@@ -292,20 +291,17 @@ func validateStorageChange(path *field.Path, currentSize resource.Quantity, curr
 	return errs
 }
 
-// ValidateReferences checks the rules that need other objects: the backup
-// storages, and the running OpenSearchCluster with its StorageClass. It
+// ValidateReferences checks the rules that need other objects: the user and
+// TLS Secrets, and the running OpenSearchCluster with its StorageClass.
+// Whether a backup storage suits the BackupClass is core's verdict, which the
+// runtime enforces. It
 // repeats the transition rules against the running cluster, since Validate
 // only sees the previous Instance at admission.
 func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, error) {
-	errs, err := validateBackupStorages(c)
+	errs, err := validateUserSecret(c)
 	if err != nil {
 		return nil, err
 	}
-	userErrs, err := validateUserSecret(c)
-	if err != nil {
-		return nil, err
-	}
-	errs = append(errs, userErrs...)
 	tlsErrs, err := validateTLSReferences(c)
 	if err != nil {
 		return nil, err
@@ -383,32 +379,6 @@ func validateTopologyMatches(existing *opensearchv1.OpenSearchCluster, topology 
 	}
 	return field.ErrorList{field.Forbidden(topologyTypePath,
 		fmt.Sprintf("cannot be changed after creation; keep %q", current))}
-}
-
-// validateBackupStorages rejects a backup storage the snapshot repository
-// cannot use: only S3-compatible storage is supported.
-func validateBackupStorages(c *controller.Context) (field.ErrorList, error) {
-	backupCfg := c.Instance().Spec.Backup
-	if backupCfg == nil || !backupCfg.Enabled {
-		return nil, nil
-	}
-	var errs field.ErrorList
-	for i, entry := range backupCfg.Storages {
-		bs, err := c.BackupStorage(entry.StorageRef.Name)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				// Whether a referent exists is the runtime's check.
-				continue
-			}
-			return nil, fmt.Errorf("get backup storage %q: %w", entry.StorageRef.Name, err)
-		}
-		if bs.Spec.Type != backupv1alpha1.BackupStorageTypeS3 || bs.Spec.S3 == nil {
-			errs = append(errs, field.Invalid(
-				field.NewPath("spec", "backup", "storages").Index(i).Child("storageRef", "name"),
-				entry.StorageRef.Name, "only S3-compatible backup storage is supported"))
-		}
-	}
-	return errs, nil
 }
 
 // validateStorageExpansion rejects a storage increase when the StorageClass

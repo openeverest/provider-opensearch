@@ -5,7 +5,8 @@ kind: Instance
 metadata:
   name: test-instance
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"
   connectionSecretRef:
     name: test-instance-conn
 ---

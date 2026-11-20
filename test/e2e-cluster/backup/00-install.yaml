@@ -12,11 +12,17 @@ kind: BackupStorage
 metadata:
   name: seaweedfs
 spec:
-  type: s3
-  s3:
-    bucket: backups
+  backupStorageClassRef:
+    name: s3
+  location:
+    objectStore:
+      bucket: backups
+  parameters:
     region: us-east-1
     endpointURL: http://seaweedfs.seaweedfs.svc:8333
     forcePathStyle: true
+    implementation: other
+  authentication:
+    mode: AccessKey
     credentialsSecretRef:
       name: seaweedfs-credentials

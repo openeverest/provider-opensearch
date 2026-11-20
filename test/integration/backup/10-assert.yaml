@@ -1,5 +1,6 @@
 # The storage becomes a snapshot repository under the Instance's own path,
-# with its credentials in the keystore and the repository-s3 plugin.
+# backups/<namespace>/<instance>/<uid>/<storage>, with its credentials in the
+# keystore and the repository-s3 plugin.
 apiVersion: opensearch.org/v1
 kind: OpenSearchCluster
 metadata:
@@ -17,7 +18,8 @@ spec:
           region: us-east-1
           endpoint: http://s3.example.com:8333
           path_style_access: "true"
-          (base_path == join('/', [$namespace, 'test-instance'])): true
+          (starts_with(base_path, join('/', ['backups', $namespace, 'test-instance', '']))): true
+          (ends_with(base_path, '/s3')): true
     keystore:
       - secret:
           name: s3-credentials

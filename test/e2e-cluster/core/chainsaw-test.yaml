@@ -95,7 +95,8 @@ spec:
               metadata:
                 name: test-instance
               status:
-                phase: Ready
+                phase: Provisioned
+                (conditions[?type == 'Ready'].status | [0]): "True"
         - script:
             timeout: 2m
             content: ../lib/opensearch.sh test-instance GET /_cluster/health

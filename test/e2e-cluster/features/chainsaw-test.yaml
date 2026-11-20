@@ -91,7 +91,8 @@ spec:
               metadata:
                 name: test-instance
               status:
-                phase: Updating
+                phase: Provisioned
+                (conditions[?type == 'Ready'].status | [0]): "False"
         - assert:
             file: 40-assert.yaml
             timeout: 30m

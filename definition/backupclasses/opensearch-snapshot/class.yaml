@@ -1,10 +1,14 @@
 # OpensearchSnapshot BackupClass definition.
 # This file is the source of truth for the generated BackupClass manifest.
 #
+# provider-sdk generate makes the class ProviderManaged and names this
+# provider in providerManaged.providerRef: the provider claims and executes it.
+#
 # Fields:
 #   displayName/description: human-readable metadata.
-#   supportedProviders: providers this class can be used with.
-#   executionMode: "ProviderManaged" (operator-native) or "Job".
+#   backupStorageClasses: BackupStorageClasses the engine writes to, with their
+#     auth modes, the parameters it supports (parametersSchema narrows the
+#     storage class's schema) and the spec.tls settings it honours (tls).
 #   providerManaged.supportsPITR: advertise PITR capability to Restore validation.
 #   providerManaged.limits: caps the runtime enforces against Instance.spec.backup.
 #     maxStorages, maxPITREnabledStorages, maxSchedulesPerStorage — unset means unlimited.
@@ -24,7 +28,21 @@ description: >-
   no snapshot or restore CR of its own. Point-in-time recovery is not
   supported.
 displayName: OpenSearch Snapshot
-executionMode: ProviderManaged
+backupStorageClasses:
+    - name: s3
+      authModes:
+          - AccessKey
+      parametersSchema:
+          openAPIV3Schema:
+              properties:
+                  # The repository-s3 plugin cannot use GCS through its S3 client.
+                  implementation:
+                      enum: [aws, minio, ceph, other]
+      tls:
+          # repository-s3 trusts the JVM's CA store only and always verifies
+          # certificates: it has no per-client CA or skip-verify setting.
+          customCA: None
+          insecureSkipVerify: None
 parametersSchema:
     openAPIV3Schema: OpensearchSnapshotBackupParameters
 providerManaged:
@@ -34,5 +52,3 @@ providerManaged:
     supportsPITR: false
 restoreParametersSchema:
     openAPIV3Schema: OpensearchSnapshotRestoreParameters
-supportedProviders:
-    - opensearch
