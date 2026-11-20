@@ -47,8 +47,15 @@ manages pods directly — all lifecycle work is delegated to the operator.
 
 | provider-opensearch | OpenEverest | OpenSearch operator | OpenSearch | Kubernetes |
 |---|---|---|---|---|
+| `0.3.x` | `2.0.0-alpha.1` | `3.0.x` (chart `3.0.14`) | `3.7`, `3.8` | `1.32` – `1.35` |
 | `0.2.x` | `2.0.0-dev.3` | `3.0.x` (chart `3.0.14`) | `3.7`, `3.8` | `1.30` – `1.35` |
 | `0.1.x` | `2.0.0-dev.3` | `3.0.x` (chart `3.0.14`) | `3.7`, `3.8` | `1.30` – `1.34` |
+
+The OpenEverest column names exact versions: SemVer ranks `2.0.0-dev.N` above `2.0.0-alpha.N`,
+so a range would also claim the older dev releases. `0.3.x` needs the class-based
+`BackupStorage`, `ClusterInstancePreset`, the monitoring contract and the condition-based
+Instance status of `2.0.0-alpha.1`; install it with that core on a fresh cluster, as there is
+no upgrade path from `0.2.x`.
 
 ## Capabilities
 
