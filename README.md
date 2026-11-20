@@ -101,6 +101,10 @@ helm install provider-opensearch \
   without them, so enabling the operator's webhooks is defense-in-depth, not a requirement.
   Set `admission.certManager.enabled=true` to have cert-manager issue the provider webhook's
   certificate instead of the chart.
+- The chart installs a `ClusterInstancePreset` per topology, `opensearch-standard` and
+  `opensearch-dedicated`, with the UI's default sizes on the default version. Change or disable
+  them under `presets` in the chart values. Presets are cluster-scoped, so they reference no
+  Secrets or backup storages; teams publish their own as namespaced `InstancePreset`s.
 
 Upgrade and uninstall:
 

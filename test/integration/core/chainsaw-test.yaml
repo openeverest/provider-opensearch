@@ -29,6 +29,11 @@ spec:
         - assert:
             file: 00-assert.yaml
 
+    - name: presets-installed
+      try:
+        - assert:
+            file: 01-assert-presets.yaml
+
     - name: create-instance
       try:
         - apply:

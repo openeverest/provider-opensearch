@@ -1,0 +1,23 @@
+# The chart ships one ClusterInstancePreset per topology, on the default
+# version bundle.
+apiVersion: core.openeverest.io/v1alpha1
+kind: ClusterInstancePreset
+metadata:
+  name: opensearch-standard
+spec:
+  providerRef:
+    name: opensearch
+  version: "3.8.0"
+  topology:
+    type: standard
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: ClusterInstancePreset
+metadata:
+  name: opensearch-dedicated
+spec:
+  providerRef:
+    name: opensearch
+  version: "3.8.0"
+  topology:
+    type: dedicated
