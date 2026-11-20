@@ -531,14 +531,11 @@ func joinPEM(bundles ...[]byte) []byte {
 // clientCA returns the CA clients verify the HTTP certificate with: the
 // user's CA, or the one the operator generated.
 func clientCA(c *controller.Context) ([]byte, error) {
-	t, err := instanceTLSParameters(c.Instance())
+	ref, err := httpCASecretRef(c)
 	if err != nil {
 		return nil, err
 	}
-	name := caSecretName(c.Name())
-	if customCertificate(t) {
-		name = httpCertificateSecretName(c.Name(), t)
-	}
+	name := ref.Name
 	secret := &corev1.Secret{}
 	if err := c.Get(secret, name); err != nil {
 		return nil, fmt.Errorf("get CA secret %q: %w", name, err)

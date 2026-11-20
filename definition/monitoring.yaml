@@ -1,0 +1,13 @@
+# Monitoring contract: what each component type exposes to monitoring
+# classes. provider-sdk generate publishes it as Provider.spec.monitoring.
+#
+# opensearch: OpenSearch serves no OpenMetrics itself. The provider installs
+# the opensearch-project Prometheus exporter plugin on every node while a
+# bound MonitoringClass needs metrics (or spec.monitoring.sources.metrics.policy
+# is Always), which restarts the nodes one by one, and publishes its
+# /_prometheus/metrics endpoint with a read-only monitoring user.
+#
+# No operator-native integration (integrations) is rendered.
+componentTypes:
+  opensearch:
+    metrics: Exporter

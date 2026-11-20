@@ -1,0 +1,39 @@
+# Once the cluster is initialized, the operator can create the user, its
+# role and the binding through the cluster's REST API.
+apiVersion: opensearch.org/v1
+kind: OpensearchUser
+metadata:
+  name: test-instance-monitoring
+spec:
+  opensearchCluster:
+    name: test-instance
+  passwordFrom:
+    name: test-instance-monitoring
+    key: password
+---
+# Statistics of the cluster and every index, and no documents.
+apiVersion: opensearch.org/v1
+kind: OpensearchRole
+metadata:
+  name: test-instance-monitoring
+spec:
+  opensearchCluster:
+    name: test-instance
+  clusterPermissions:
+    - cluster_monitor
+  indexPermissions:
+    - indexPatterns: ["*"]
+      allowedActions:
+        - indices_monitor
+---
+apiVersion: opensearch.org/v1
+kind: OpensearchUserRoleBinding
+metadata:
+  name: test-instance-monitoring
+spec:
+  opensearchCluster:
+    name: test-instance
+  roles:
+    - test-instance-monitoring
+  users:
+    - test-instance-monitoring

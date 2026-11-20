@@ -1,0 +1,64 @@
+---
+# Monitoring against the real OpenSearch operator (see deploy-provider-e2e):
+# the Prometheus exporter plugin is installed, and the endpoint the Instance
+# publishes serves metrics to its read-only monitoring user.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: e2e-cluster-monitoring
+spec:
+  description: |
+    With metrics policy Always, the nodes run the exporter plugin, the
+    Instance publishes its metrics endpoint, a scrape with the published
+    credential and CA returns OpenSearch metrics, and the monitoring user
+    cannot write.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters,opensearchusers,opensearchroles,opensearchuserrolebindings -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get pods
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 200
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=operator
+        tail: 200
+
+  steps:
+    - name: provider-and-operator-deployed
+      try:
+        - assert:
+            file: ../core/00-assert.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - apply:
+            file: ../lib/toolbox.yaml
+        - assert:
+            file: 20-assert.yaml
+            timeout: 10m
+        - assert:
+            file: ../lib/toolbox-assert.yaml
+
+    - name: scrape
+      try:
+        - script:
+            timeout: 2m
+            content: ./scrape.sh
+            check:
+              ($error == null): true
+              (contains($stdout, 'HTTP 200')): true
+              (contains($stdout, 'opensearch_cluster_status')): true
+        # Read-only: the monitoring user cannot create an index.
+        - script:
+            timeout: 2m
+            content: ./scrape.sh /not-allowed/_doc/1
+            check:
+              (contains($stdout, 'HTTP 200')): false

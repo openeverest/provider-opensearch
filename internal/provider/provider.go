@@ -21,6 +21,7 @@ import (
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-opensearch/definition/backupclasses"
@@ -43,6 +44,8 @@ func New() *Provider {
 			ProviderName: common.ProviderName,
 			SchemeFuncs: []func(*runtime.Scheme) error{
 				opensearchv1.AddToScheme,
+				// Sync reads the MonitoringBindings through RequiredSources.
+				monitoringv1alpha1.AddToScheme,
 				// Read by ValidateReferences to check volume expansion support.
 				storagev1.AddToScheme,
 				// The Dashboards Deployment the operator leaves behind is deleted by Sync.
@@ -54,6 +57,9 @@ func New() *Provider {
 				// The connection details publish the address a LoadBalancer is
 				// given, which arrives after the Service is created.
 				controller.WatchOwned(&corev1.Service{}),
+				// The metrics endpoint is published once the operator reports the
+				// monitoring user created.
+				controller.WatchOwned(&opensearchv1.OpensearchUser{}),
 				// Status reports Restoring while a Restore of the Instance runs.
 				controller.WatchExternal(&backupv1alpha1.Restore{}, handler.EnqueueRequestsFromMapFunc(restoreInstance)),
 			},
@@ -111,6 +117,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 	if err != nil {
 		return err
 	}
+	exporter, err := exporterEnabled(c, existing)
+	if err != nil {
+		return err
+	}
 
 	tlsParams, err := instanceTLSParameters(in)
 	if err != nil {
@@ -140,6 +150,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 			backupPlugins:    backupPlugins,
 			customHTTP:       customHTTP,
 			adminCredentials: adminCredentials,
+			exporter:         exporter,
 		}),
 	}
 
@@ -177,8 +188,13 @@ func (p *Provider) Sync(c *controller.Context) error {
 		Repos             []opensearchv1.SnapshotRepoConfig `json:"repos,omitempty"`
 		Keystore          []opensearchv1.KeystoreValue      `json:"keystore,omitempty"`
 		DashboardsEnabled bool                              `json:"dashboardsEnabled,omitempty"`
-	}{snapshotRepos, keystore, cluster.Spec.Dashboards.Enable}
+		// Monitoring destinations that need metrics turn the exporter on.
+		Exporter bool `json:"exporter,omitempty"`
+	}{snapshotRepos, keystore, cluster.Spec.Dashboards.Enable, exporter}
 	if err := applyClusterGated(c, cluster, exists, otherInputs); err != nil {
+		return err
+	}
+	if err := syncMonitoringUser(c, exporter, existing.Status.Initialized); err != nil {
 		return err
 	}
 

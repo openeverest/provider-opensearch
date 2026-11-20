@@ -170,6 +170,10 @@ test-integration-backup: ## Run the backup configuration integration tests.
 test-integration-maintenance: ## Run the maintenance gating integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/maintenance
 
+.PHONY: test-integration-monitoring
+test-integration-monitoring: ## Run the monitoring sources integration tests.
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/monitoring
+
 .PHONY: test-integration-tls
 test-integration-tls: install-cert-manager ## Run the custom credentials and TLS integration tests (installs cert-manager).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/tls
@@ -189,6 +193,10 @@ test-e2e-cluster-dedicated: ## Run the dedicated topology e2e-cluster suite (req
 .PHONY: test-e2e-cluster-backup
 test-e2e-cluster-backup: ## Run the backup and restore e2e-cluster suite (requires the real OpenSearch operator, see deploy-provider-e2e).
 	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/backup
+
+.PHONY: test-e2e-cluster-monitoring
+test-e2e-cluster-monitoring: ## Run the monitoring e2e-cluster suite (requires the real OpenSearch operator, see deploy-provider-e2e).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/monitoring
 
 .PHONY: test-e2e-cluster-tls
 test-e2e-cluster-tls: install-cert-manager ## Run the custom credentials and TLS e2e-cluster suite (installs cert-manager; requires the real OpenSearch operator).

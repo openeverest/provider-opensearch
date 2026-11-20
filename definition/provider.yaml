@@ -27,3 +27,10 @@ components:
     parametersSchema: OpensearchParameters
   dashboards:
     type: dashboards
+
+# The kind of each component type classifies the software for monitoring
+# classes and the UI (an OpenTelemetry db.system.name value). Every type
+# definition/monitoring.yaml lists needs one.
+componentTypes:
+  opensearch:
+    kind: opensearch

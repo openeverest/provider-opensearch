@@ -1,0 +1,20 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"
+  monitoring:
+    sources:
+      metrics:
+        - component: engine
+          path: /_prometheus/metrics
+          scheme: https
+---
+apiVersion: opensearch.org/v1
+kind: OpensearchUser
+metadata:
+  name: test-instance-monitoring
+status:
+  state: CREATED
