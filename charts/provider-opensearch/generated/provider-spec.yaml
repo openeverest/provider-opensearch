@@ -354,38 +354,36 @@ spec:
                       fieldParams:
                         defaultValue: 1
                         label: CPU
-                        step: 0.5
+                        unitLabel: CPU
                       path: spec.components.clusterManager.resources.limits.cpu
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 0.5
+                        multipleOf: 0.001
                         required: true
                     disk:
                       fieldParams:
-                        badge: Gi
-                        badgeToApi: true
                         defaultValue: 5
                         label: Disk
+                        unit: Gi
                       path: spec.components.clusterManager.storage.size
-                      uiType: number
+                      uiType: quantity
                       validation:
                         int: true
                         min: 1
                         modes:
                           edit:
                             celExpressions:
-                              - celExpr: spec.components.clusterManager.storage.size >= original.spec.components.clusterManager.storage.size
+                              - celExpr: double(spec.components.clusterManager.storage.size) >= double(original.spec.components.clusterManager.storage.size)
                                 message: Disk size cannot be decreased
                         required: true
                     memory:
                       fieldParams:
-                        badge: Gi
-                        badgeToApi: true
                         defaultValue: 2
                         label: Memory
-                        step: 0.5
+                        unit: Gi
                       path: spec.components.clusterManager.resources.limits.memory
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 2
                         required: true
@@ -415,21 +413,20 @@ spec:
                       fieldParams:
                         defaultValue: 1
                         label: CPU
-                        step: 0.5
+                        unitLabel: CPU
                       path: spec.components.coordinator.resources.limits.cpu
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 0.5
+                        multipleOf: 0.001
                         required: true
                     memory:
                       fieldParams:
-                        badge: Gi
-                        badgeToApi: true
                         defaultValue: 4
                         label: Memory
-                        step: 0.5
+                        unit: Gi
                       path: spec.components.coordinator.resources.limits.memory
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 2
                         required: true
@@ -465,38 +462,36 @@ spec:
                       fieldParams:
                         defaultValue: 1
                         label: CPU
-                        step: 0.5
+                        unitLabel: CPU
                       path: spec.components.engine.resources.limits.cpu
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 0.5
+                        multipleOf: 0.001
                         required: true
                     disk:
                       fieldParams:
-                        badge: Gi
-                        badgeToApi: true
                         defaultValue: 25
                         label: Disk
+                        unit: Gi
                       path: spec.components.engine.storage.size
-                      uiType: number
+                      uiType: quantity
                       validation:
                         int: true
                         min: 1
                         modes:
                           edit:
                             celExpressions:
-                              - celExpr: spec.components.engine.storage.size >= original.spec.components.engine.storage.size
+                              - celExpr: double(spec.components.engine.storage.size) >= double(original.spec.components.engine.storage.size)
                                 message: Disk size cannot be decreased
                         required: true
                     memory:
                       fieldParams:
-                        badge: Gi
-                        badgeToApi: true
                         defaultValue: 4
                         label: Memory
-                        step: 0.5
+                        unit: Gi
                       path: spec.components.engine.resources.limits.memory
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 2
                         required: true
@@ -674,38 +669,36 @@ spec:
                       fieldParams:
                         defaultValue: 1
                         label: CPU
-                        step: 0.5
+                        unitLabel: CPU
                       path: spec.components.engine.resources.limits.cpu
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 0.5
+                        multipleOf: 0.001
                         required: true
                     disk:
                       fieldParams:
-                        badge: Gi
-                        badgeToApi: true
                         defaultValue: 25
                         label: Disk
+                        unit: Gi
                       path: spec.components.engine.storage.size
-                      uiType: number
+                      uiType: quantity
                       validation:
                         int: true
                         min: 1
                         modes:
                           edit:
                             celExpressions:
-                              - celExpr: spec.components.engine.storage.size >= original.spec.components.engine.storage.size
+                              - celExpr: double(spec.components.engine.storage.size) >= double(original.spec.components.engine.storage.size)
                                 message: Disk size cannot be decreased
                         required: true
                     memory:
                       fieldParams:
-                        badge: Gi
-                        badgeToApi: true
                         defaultValue: 4
                         label: Memory
-                        step: 0.5
+                        unit: Gi
                       path: spec.components.engine.resources.limits.memory
-                      uiType: number
+                      uiType: quantity
                       validation:
                         min: 2
                         required: true
