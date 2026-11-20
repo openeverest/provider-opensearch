@@ -74,6 +74,31 @@ spec:
                   image: opensearchproject/opensearch:3.8.0
                 dashboards:
                   version: 3.8.0
+        # Until the operator reports the new version, the Instance reports
+        # the Upgrading operation and stays available.
+        - assert:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              status:
+                (conditions[?type == 'Upgrading'].status | [0]): "True"
+                (conditions[?type == 'Upgrading'].reason | [0]): UpgradingVersion
+                (conditions[?type == 'Available'].status | [0]): "True"
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch opensearchcluster/test-instance --subresource status --type merge \
+                -p '{"status":{"version":"3.8.0"}}'
+        - assert:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              status:
+                (conditions[?type == 'Upgrading'].status | [0]): "False"
+                (conditions[?type == 'Ready'].status | [0]): "True"
 
     - name: admission-rejects-unsafe-changes
       try:
