@@ -21,11 +21,13 @@ kind: Instance
 metadata:
   name: tls-secret
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"
 ---
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
   name: tls-issuer
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"

@@ -10,4 +10,5 @@ kind: Instance
 metadata:
   name: source
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"

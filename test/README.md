@@ -74,8 +74,9 @@ job.
   that don't actually connect, don't slip through unnoticed.
 - **Assert both directions** — after applying an `Instance`, assert the
   operator-native CR spec the provider must produce; after the operator
-  (real or simulated) reports readiness, assert the `Instance` reaches
-  `phase: Ready`.
+  (real or simulated) reports readiness, assert the `Instance`'s `Ready`
+  condition is `True` (`status.phase` is only `Pending`, `Provisioned` or
+  `Terminating`).
 - **Collect diagnostics on failure** — use the `catch` block in
   `chainsaw-test.yaml` to dump relevant resources and provider logs.
 

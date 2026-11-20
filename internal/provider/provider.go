@@ -22,6 +22,7 @@ import (
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
+	"github.com/openeverest/provider-opensearch/definition/backupclasses"
 	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
@@ -36,7 +37,7 @@ type Provider struct {
 
 // New creates a new Provider instance.
 func New() *Provider {
-	return &Provider{
+	p := &Provider{
 		BaseProvider: controller.BaseProvider{
 			ProviderName: common.ProviderName,
 			SchemeFuncs: []func(*runtime.Scheme) error{
@@ -57,6 +58,10 @@ func New() *Provider {
 			},
 		},
 	}
+	// The runtime claims the BackupClass this provider ships and reports
+	// whether it matches what the chart installs.
+	p.SetShippedBackupClasses(backupclasses.Shipped())
+	return p
 }
 
 // Sync creates or updates the OpenSearchCluster for the Instance.
@@ -91,7 +96,17 @@ func (p *Provider) Sync(c *controller.Context) error {
 		configs[def.component] = config
 	}
 
-	snapshotRepos, keystore, backupPlugins, err := buildBackupConfig(c)
+	// The live cluster, if any: entries of spec.backup.storages that cannot
+	// be applied keep what it has for them.
+	existing := &opensearchv1.OpenSearchCluster{}
+	exists := false
+	if err := c.Get(existing, c.Name()); err == nil {
+		exists = true
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	snapshotRepos, keystore, backupPlugins, err := buildBackupConfig(c, existing)
 	if err != nil {
 		return err
 	}
@@ -129,13 +144,8 @@ func (p *Provider) Sync(c *controller.Context) error {
 
 	// Apply replaces metadata wholesale; keep the operator's finalizer so it
 	// is not stripped and re-added on every reconcile.
-	existing := &opensearchv1.OpenSearchCluster{}
-	exists := false
-	if err := c.Get(existing, c.Name()); err == nil {
-		exists = true
+	if exists {
 		cluster.Finalizers = existing.Finalizers
-	} else if !apierrors.IsNotFound(err) {
-		return err
 	}
 
 	if dashboards, ok := c.Instance().Spec.Components[common.ComponentDashboards]; ok {
@@ -234,7 +244,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	cluster := &opensearchv1.OpenSearchCluster{}
 	if err := c.Get(cluster, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {
-			return controller.Provisioning("Waiting for OpenSearchCluster to be created"), nil
+			return controller.Progressing("Waiting for OpenSearchCluster to be created"), nil
 		}
 		return controller.Status{}, err
 	}
@@ -261,7 +271,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	}
 
 	status := clusterStatus(cluster, details)
-	if status.Phase == corev1alpha1.InstancePhaseReady {
+	if status.Converged {
 		restoring, err := activeRestore(c)
 		if err != nil {
 			return controller.Status{}, err

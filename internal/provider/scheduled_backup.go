@@ -23,8 +23,8 @@ import (
 	"github.com/openeverest/provider-opensearch/internal/common"
 )
 
-// backupClassName is the BackupClass scheduled (and on-demand) backups are
-// mirrored against.
+// backupClassName is the BackupClass this provider ships and executes;
+// scheduled backups are mirrored against it.
 const backupClassName = "opensearch-snapshot"
 
 // instanceLabel is set by c.ObjectMeta on every resource this provider

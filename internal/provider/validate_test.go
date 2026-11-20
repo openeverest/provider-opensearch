@@ -17,7 +17,6 @@ import (
 
 	opensearchv1 "github.com/opensearch-project/opensearch-k8s-operator/opensearch-operator/api/opensearch.org/v1"
 
-	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller/validationtest"
 
@@ -280,22 +279,6 @@ func TestValidateReferencesAgainstRunningCluster(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, errs)
 	})
-}
-
-func TestValidateReferencesBackupStorage(t *testing.T) {
-	entry := func(name string) corev1alpha1.InstanceBackupStorage {
-		return corev1alpha1.InstanceBackupStorage{StorageRef: commonv1alpha1.ObjectRef{Name: name}}
-	}
-	notS3 := testBackupStorage("azure", nil)
-	notS3.Spec.Type = "azure"
-	in := instanceWithBackup(entry("s3"), entry("azure"), entry("missing"))
-	c, _ := newTestContext(t, in, testBackupStorage("s3", validS3Spec()), notS3)
-
-	errs, err := New().ValidateReferences(c)
-
-	require.NoError(t, err)
-	// A missing storage is reported by the runtime, not here.
-	assert.Equal(t, []string{"spec.backup.storages[1].storageRef.name"}, fieldsOf(errs))
 }
 
 func TestValidateReferencesDedicated(t *testing.T) {

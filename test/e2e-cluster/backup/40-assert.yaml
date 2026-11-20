@@ -3,7 +3,8 @@ kind: Instance
 metadata:
   name: destination
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"
 ---
 apiVersion: backup.openeverest.io/v1alpha1
 kind: Restore

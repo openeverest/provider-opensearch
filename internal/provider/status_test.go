@@ -31,39 +31,39 @@ func testCluster(replicas int32, st opensearchv1.ClusterStatus) *opensearchv1.Op
 func TestClusterStatus(t *testing.T) {
 	details := controller.ConnectionDetails{Host: "h"}
 	tests := []struct {
-		name    string
-		status  opensearchv1.ClusterStatus
-		phase   corev1alpha1.InstancePhase
-		details bool
+		name      string
+		status    opensearchv1.ClusterStatus
+		converged bool
+		details   bool
 	}{
 		{
-			name:   "not initialized",
-			status: opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning},
-			phase:  corev1alpha1.InstancePhaseProvisioning,
+			name:      "not initialized",
+			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning},
+			converged: false,
 		},
 		{
-			name:    "green",
-			status:  opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth},
-			phase:   corev1alpha1.InstancePhaseReady,
-			details: true,
+			name:      "green",
+			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth},
+			converged: true,
+			details:   true,
 		},
 		{
-			name:    "yellow",
-			status:  opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchYellowHealth},
-			phase:   corev1alpha1.InstancePhaseReady,
-			details: true,
+			name:      "yellow",
+			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchYellowHealth},
+			converged: true,
+			details:   true,
 		},
 		{
-			name:    "red",
-			status:  opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchRedHealth},
-			phase:   corev1alpha1.InstancePhaseUpdating,
-			details: true,
+			name:      "red",
+			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchRedHealth},
+			converged: false,
+			details:   true,
 		},
 		{
-			name:    "upgrading",
-			status:  opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseUpgrading, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth},
-			phase:   corev1alpha1.InstancePhaseUpdating,
-			details: true,
+			name:      "upgrading",
+			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseUpgrading, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth},
+			converged: false,
+			details:   true,
 		},
 		{
 			// Between two node restarts every node is up and the cluster green.
@@ -72,8 +72,8 @@ func TestClusterStatus(t *testing.T) {
 				Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
 				ComponentsStatus: []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "InProgress"}},
 			},
-			phase:   corev1alpha1.InstancePhaseUpdating,
-			details: true,
+			converged: false,
+			details:   true,
 		},
 		{
 			name: "rolling restart finished",
@@ -81,14 +81,14 @@ func TestClusterStatus(t *testing.T) {
 				Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 3, Health: opensearchv1.OpenSearchGreenHealth,
 				ComponentsStatus: []opensearchv1.ComponentStatus{{Component: "RollingRestart", Status: "Finished"}},
 			},
-			phase:   corev1alpha1.InstancePhaseReady,
-			details: true,
+			converged: true,
+			details:   true,
 		},
 		{
-			name:    "scaling",
-			status:  opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 2, Health: opensearchv1.OpenSearchGreenHealth},
-			phase:   corev1alpha1.InstancePhaseUpdating,
-			details: true,
+			name:      "scaling",
+			status:    opensearchv1.ClusterStatus{Phase: opensearchv1.PhaseRunning, Initialized: true, AvailableNodes: 2, Health: opensearchv1.OpenSearchGreenHealth},
+			converged: false,
+			details:   true,
 		},
 	}
 	for _, tt := range tests {
@@ -100,7 +100,7 @@ func TestClusterStatus(t *testing.T) {
 
 			got := clusterStatus(testCluster(3, tt.status), d)
 
-			assert.Equal(t, tt.phase, got.Phase)
+			assert.Equal(t, tt.converged, got.Converged)
 			assert.Equal(t, tt.details, !got.ConnectionDetails.IsEmpty())
 		})
 	}
@@ -146,7 +146,7 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.InstancePhaseProvisioning, got.Phase)
+		assert.False(t, got.Converged)
 	})
 
 	t.Run("ready with credentials", func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.InstancePhaseReady, got.Phase)
+		assert.True(t, got.Converged)
 		assert.Equal(t, "secret", got.ConnectionDetails.Password)
 	})
 
@@ -216,7 +216,7 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.InstancePhaseRestoring, got.Phase)
+		assert.Equal(t, corev1alpha1.ConditionRestoring, operationTypes(got))
 		assert.Equal(t, "secret", got.ConnectionDetails.Password)
 	})
 
@@ -228,7 +228,7 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.InstancePhaseReady, got.Phase)
+		assert.True(t, got.Converged)
 	})
 
 	t.Run("initialized without admin secret requeues", func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.InstancePhaseRestoring, got.Phase)
+		assert.Equal(t, corev1alpha1.ConditionRestoring, operationTypes(got))
 	})
 
 	t.Run("data source failed overrides a ready cluster", func(t *testing.T) {
@@ -263,7 +263,7 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.InstancePhaseFailed, got.Phase)
+		assert.NotEmpty(t, got.Problems)
 	})
 
 	t.Run("data source succeeded does not override", func(t *testing.T) {
@@ -280,6 +280,14 @@ func TestStatus(t *testing.T) {
 		got, err := New().Status(c)
 
 		require.NoError(t, err)
-		assert.Equal(t, corev1alpha1.InstancePhaseReady, got.Phase)
+		assert.True(t, got.Converged)
 	})
+}
+
+// operationTypes returns the condition type of the single operation s reports.
+func operationTypes(s controller.Status) string {
+	if len(s.Operations) != 1 {
+		return ""
+	}
+	return s.Operations[0].Type
 }

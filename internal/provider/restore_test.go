@@ -14,7 +14,6 @@ import (
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
-	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 )
 
 func testRestore(backupName string) *backupv1alpha1.Restore {
@@ -31,6 +30,9 @@ func testRestore(backupName string) *backupv1alpha1.Restore {
 }
 
 // sourceBackup is a Backup of origin, stored in my-storage.
+// sourceBackupPath is where sourceBackup's storage entry wrote it.
+const sourceBackupPath = "team-a/backups/" + testNamespace + "/source/source-uid/my-storage"
+
 func sourceBackup(origin string) *backupv1alpha1.Backup {
 	return &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-backup", Namespace: testNamespace},
@@ -38,6 +40,7 @@ func sourceBackup(origin string) *backupv1alpha1.Backup {
 			Origin:     backupv1alpha1.BackupOrigin{Type: backupv1alpha1.BackupOriginTypeInstance, InstanceRef: &commonv1alpha1.ObjectRef{Name: origin}},
 			StorageRef: commonv1alpha1.ObjectRef{Name: "my-storage"},
 		},
+		Status: backupv1alpha1.BackupStatus{Path: sourceBackupPath},
 	}
 }
 
@@ -191,8 +194,8 @@ func TestSyncRestore(t *testing.T) {
 	t.Run("backup of another Instance is read through a read-only repository", func(t *testing.T) {
 		api := &restoreAPI{snapshotState: "SUCCESS", indices: `["books"]`}
 		withTestOpenSearchClient(t, api.handler(t))
-		in := instanceWithBackup(corev1alpha1.InstanceBackupStorage{StorageRef: commonv1alpha1.ObjectRef{Name: "my-storage"}})
-		c, _ := newTestContext(t, in, runningCluster(), sourceBackup("source"), testBackupStorage("my-storage", validS3Spec()))
+		bs, secret := testBackupStorage("my-storage", minioParams())
+		c, _ := newTestContext(t, instanceWithBackup(storageEntry("my-storage")), runningCluster(), sourceBackup("source"), bs, secret)
 
 		got, err := New().SyncRestore(c, testRestore("my-backup"))
 
@@ -200,7 +203,8 @@ func TestSyncRestore(t *testing.T) {
 		assert.Equal(t, backupv1alpha1.RestoreStateRunning, got.State)
 		assert.Contains(t, api.calls, "PUT /_snapshot/my-storage-from-source")
 		settings := api.registered["settings"].(map[string]any)
-		assert.Equal(t, testNamespace+"/source", settings["base_path"])
+		// The path the source Backup recorded, which outlives the source Instance.
+		assert.Equal(t, sourceBackupPath, settings["base_path"])
 		assert.Equal(t, "true", settings["readonly"])
 		assert.Contains(t, api.calls, "POST /_snapshot/my-storage-from-source/my-backup/_restore")
 	})
@@ -210,8 +214,8 @@ func TestSyncRestore(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error":{"type":"repository_verification_exception"}}`))
 		})
-		in := instanceWithBackup(corev1alpha1.InstanceBackupStorage{StorageRef: commonv1alpha1.ObjectRef{Name: "my-storage"}})
-		c, _ := newTestContext(t, in, runningCluster(), sourceBackup("source"), testBackupStorage("my-storage", validS3Spec()))
+		bs, secret := testBackupStorage("my-storage", minioParams())
+		c, _ := newTestContext(t, instanceWithBackup(storageEntry("my-storage")), runningCluster(), sourceBackup("source"), bs, secret)
 
 		got, err := New().SyncRestore(c, testRestore("my-backup"))
 
