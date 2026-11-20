@@ -2,6 +2,7 @@ package provider
 
 import (
 	"errors"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -148,6 +149,9 @@ type clusterInputs struct {
 	// adminCredentials names the Secret the admin user is seeded from; empty
 	// lets the operator generate one.
 	adminCredentials string
+	// exporter runs the Prometheus exporter plugin on every node, and labels
+	// the pods with the Instance so its metrics endpoints can select them.
+	exporter bool
 }
 
 // buildClusterSpec maps the OpenSearch components of an Instance onto an
@@ -181,13 +185,21 @@ func buildClusterSpec(in clusterInputs) opensearchv1.ClusterSpec {
 		httpTLS.CustomFQDN = &host
 	}
 
+	if in.exporter {
+		general.PluginsList = append(slices.Clone(general.PluginsList), exporterPlugin(in.version))
+	}
+
 	var pools []opensearchv1.NodePool
 	for _, def := range nodePoolDefs(in.topology) {
 		component, ok := in.components[def.component]
 		if !ok && def.component != common.ComponentEngine {
 			continue
 		}
-		pools = append(pools, buildNodePool(in.name, def, component, in.configs[def.component]))
+		pool := buildNodePool(in.name, def, component, in.configs[def.component])
+		if in.exporter {
+			pool.Labels = map[string]string{controller.InstanceLabel: in.name}
+		}
+		pools = append(pools, pool)
 	}
 
 	security := &opensearchv1.Security{

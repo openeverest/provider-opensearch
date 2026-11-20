@@ -21,6 +21,8 @@ package provider
 // =============================================================================
 // +kubebuilder:rbac:groups=opensearch.org,resources=opensearchclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=opensearch.org,resources=opensearchclusters/status,verbs=get
+// The read-only user the Prometheus exporter's scrapers log in as.
+// +kubebuilder:rbac:groups=opensearch.org,resources=opensearchusers;opensearchroles;opensearchuserrolebindings,verbs=get;list;watch;create;update;patch;delete
 // One OpensearchSnapshotPolicy per enabled Instance.spec.backup.storages[].schedules[] entry.
 // +kubebuilder:rbac:groups=opensearch.org,resources=opensearchsnapshotpolicies,verbs=get;list;watch;create;update;patch;delete
 // Validate reads the StorageClass to check allowVolumeExpansion before accepting a storage increase.
@@ -37,6 +39,12 @@ package provider
 // spec.parameters.tls.issuer: a cert-manager Certificate signed by the user's issuer.
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;clusterissuers,verbs=get;list;watch
+
+// =============================================================================
+// OPENEVEREST MONITORING RESOURCES
+// =============================================================================
+// +kubebuilder:rbac:groups=monitoring.openeverest.io,resources=monitoringclasses;monitoringdestinations;monitoringbindings,verbs=get;list;watch
+// +kubebuilder:rbac:groups=monitoring.openeverest.io,resources=monitoringbindings/status,verbs=patch
 
 // =============================================================================
 // OPENEVEREST BACKUP RESOURCES

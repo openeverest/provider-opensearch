@@ -1,0 +1,30 @@
+# Once every node runs the plugin and the user exists, the endpoint is
+# published: HTTPS on the HTTP port, verified with the cluster's CA.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  monitoring:
+    sources:
+      credentials:
+        - profile: metrics
+          secretRef:
+            name: test-instance-monitoring
+      metrics:
+        - component: engine
+          kind: opensearch
+          podSelector:
+            core.openeverest.io/instance: test-instance
+            opensearch.org/opensearch-nodepool: nodes
+          port: http
+          path: /_prometheus/metrics
+          scheme: https
+          tls:
+            ca:
+              secretKeyRef:
+                name: test-instance-ca
+                key: ca.crt
+            serverName: (join('.', ['test-instance', $namespace, 'svc']))
+          auth:
+            credentialProfile: metrics

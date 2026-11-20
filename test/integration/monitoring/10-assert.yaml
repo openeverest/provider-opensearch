@@ -1,0 +1,22 @@
+# The exporter plugin of the cluster's version runs on every node, whose pods
+# carry the Instance label the endpoints select on.
+apiVersion: opensearch.org/v1
+kind: OpenSearchCluster
+metadata:
+  name: test-instance
+spec:
+  general:
+    pluginsList:
+      - https://github.com/opensearch-project/opensearch-prometheus-exporter/releases/download/3.8.0.0/prometheus-exporter-3.8.0.0.zip
+  nodePools:
+    - component: nodes
+      labels:
+        core.openeverest.io/instance: test-instance
+---
+# A read-only monitoring user, with its credentials in an Instance-owned Secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-instance-monitoring
+data:
+  username: dGVzdC1pbnN0YW5jZS1tb25pdG9yaW5n # test-instance-monitoring

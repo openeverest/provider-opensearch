@@ -10,7 +10,8 @@ OpenEverest provider. Everything related to the provider's **identity**,
 
 ```
 definition/
-├── provider.yaml                    # Provider name + component→type mapping
+├── provider.yaml                    # Provider name + component→type mapping, kinds
+├── monitoring.yaml                  # Monitoring contract: metrics per component type
 ├── versions.yaml                    # Component types and their version/image catalog
 ├── types.go                         # Shared types (e.g. TopologyType)
 ├── components/
@@ -26,6 +27,7 @@ definition/
 | File | Purpose | When to edit |
 |------|---------|--------------|
 | `provider.yaml` | Names the provider and maps logical component names to types. | When adding/removing a component. |
+| `monitoring.yaml` | Declares what each component type exposes to monitoring classes. | When monitoring support changes. |
 | `versions.yaml` | Lists available versions and container images per component type. | When adding operator releases. |
 | `types.go` | Shared Go types used across the provider. | When adding provider-wide types. |
 | `components/types.go` | Go structs for component custom specs. | When a component needs custom config. |

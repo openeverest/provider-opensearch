@@ -152,6 +152,15 @@ jobs:
       suite: maintenance
     secrets: inherit
 
+  test-integration-monitoring:
+    name: Integration / monitoring
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-monitoring
+      suite: monitoring
+    secrets: inherit
+
   # Unlike the integration suites above, e2e-cluster deploys the real
   # OpenSearch operator (deploy-provider-e2e) instead of simulating it, so
   # the Instance must reach Ready against a genuinely running OpenSearch
@@ -201,4 +210,13 @@ jobs:
     with:
       make_target: test-e2e-cluster-features
       suite: features
+    secrets: inherit
+
+  test-e2e-cluster-monitoring:
+    name: E2E Cluster / monitoring
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-monitoring
+      suite: monitoring
     secrets: inherit

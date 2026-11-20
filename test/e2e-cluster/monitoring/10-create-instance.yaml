@@ -1,0 +1,22 @@
+# Publishes its metrics endpoints whether or not a destination needs them, so
+# no monitoring extension is needed.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+spec:
+  providerRef:
+    name: opensearch
+  components:
+    engine:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "500m"
+          memory: 2Gi
+      storage:
+        size: 5Gi
+  monitoring:
+    sources:
+      metrics:
+        policy: Always

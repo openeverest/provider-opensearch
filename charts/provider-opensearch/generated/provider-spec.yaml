@@ -11,6 +11,7 @@ spec:
           version: 3.8.0
     opensearch:
       defaultVersion: 3.8.0
+      kind: opensearch
       versions:
         - image: opensearchproject/opensearch:3.7.0
           version: 3.7.0
@@ -74,6 +75,10 @@ spec:
           type: object
       type: opensearch
   defaultVersion: 3.8.0
+  monitoring:
+    componentTypes:
+      opensearch:
+        metrics: Exporter
   parametersSchema:
     openAPIV3Schema:
       description: Parameters are the Instance-wide parameters (Instance.spec.parameters).

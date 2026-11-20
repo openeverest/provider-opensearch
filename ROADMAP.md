@@ -234,18 +234,20 @@ For larger / production clusters: separate cluster-manager quorum from data node
 
 ## M5 — Monitoring
 
-The operator ships the Prometheus exporter plugin plus a `ServiceMonitor`. A first version
-(exporter + dedicated low-privilege user, tested live) exists on the community branch but is not
-merged: it predates the OpenEverest provider monitoring contract (`MonitoringBinding`,
-`spec.monitoring.destinations`) and needs to be rebuilt on it.
+Monitoring goes through the OpenEverest provider monitoring contract: the `opensearch` component
+type declares `metrics: Exporter`, and the provider runs the Prometheus exporter plugin with a
+dedicated read-only user while a bound class needs metrics. It does not use the operator's
+`general.monitoring`, whose `ServiceMonitor` would duplicate the scrape objects the monitoring
+extensions create.
 
-- [ ] Integrate through the OpenEverest provider monitoring contract (`definition/monitoring.yaml`)
-- [ ] Optional `monitoring` component → `general.monitoring` (exporter plugin, dedicated low-privilege monitoring user, scrape interval)
-- [ ] Air-gapped support via `pluginUrl`
+- [x] Integrate through the OpenEverest provider monitoring contract (`definition/monitoring.yaml`)
+- [x] Exporter plugin and dedicated low-privilege monitoring user, on demand; Chainsaw `integration/monitoring` and `e2e-cluster/monitoring` suites
+- [ ] Air-gapped support: a configurable plugin URL
+- [ ] Connections and pod metadata for agents that connect over the REST API (Coroot, Datadog)
 
 | Capability | Status |
 |---|---|
-| Monitoring | ❌ |
+| Monitoring | ✅ |
 
 ---
 

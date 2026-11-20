@@ -65,7 +65,7 @@ for what is planned next.
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration`; an `opensearch.yml` fragment (YAML), merged into `additionalConfig`. Keys the provider manages (security, discovery, node, network, paths, ports) are rejected |
 | External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service; the certificate covers in-cluster names only |
 | Dashboards | ✅ | Optional `dashboards` component; see [Configuration](#configuration) |
-| Monitoring | ❌ | Planned on the OpenEverest monitoring contract (#14) |
+| Monitoring | ✅ | Metrics for ExtensionManaged monitoring classes (Prometheus, VictoriaMetrics, …) through the Prometheus exporter plugin; see [Configuration](#configuration) |
 | TLS | ✅ | Always on. The HTTP certificate is generated, or comes from a Secret or a cert-manager issuer (`spec.parameters.tls`); transport certificates are always generated. See [Configuration](#configuration) |
 | Custom credentials | ✅ | `spec.userSecretRef` seeds the `admin` password at creation; see [Configuration](#configuration) |
 
@@ -369,6 +369,18 @@ Worth knowing:
   Instance is gone; it needs the backup's storage in the new Instance's
   `spec.backup.storages`.
   Point-in-time recovery is not supported.
+- **Monitoring** — list `MonitoringDestination`s in `spec.monitoring.destinations[]`. While a
+  destination's class needs metrics (or `spec.monitoring.sources.metrics.policy` is `Always`),
+  the provider installs the opensearch-project Prometheus exporter plugin of the cluster's
+  version on every node, which restarts the nodes one by one, and creates a read-only
+  `<name>-monitoring` user, with a role of the same name that reads the cluster's and every
+  index's statistics and no documents, through `OpensearchUser`, `OpensearchRole` and
+  `OpensearchUserRoleBinding`. Once every node runs the plugin, the Instance publishes
+  `/_prometheus/metrics` on each node pool in `status.monitoring.sources`: HTTPS on the HTTP
+  port, verified with the cluster's CA, as the monitoring user. The class's extension scrapes it;
+  the provider creates no scrape object. When no destination needs metrics any more, the plugin
+  and the user are removed. The plugin is downloaded from GitHub at node start, so nodes need
+  egress to it. No operator-native integration (such as PMM) is supported.
 
 ## Development
 

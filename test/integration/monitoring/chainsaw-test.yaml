@@ -1,0 +1,101 @@
+---
+# Monitoring sources without the OpenSearch operator (see deploy-provider-ci):
+# what Sync produces for the metrics policy, and what the Instance publishes
+# once the simulated operator reports the plugin running. Scraping the
+# endpoint needs a real cluster: see test/e2e-cluster/monitoring.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: monitoring
+spec:
+  description: |
+    The Prometheus exporter plugin and a read-only monitoring user while
+    metrics are required, the published metrics endpoint, and removing both
+    once they are not.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get opensearchclusters,opensearchusers,opensearchroles,opensearchuserrolebindings -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-opensearch
+        tail: 100
+
+  steps:
+    - name: provider-deployed
+      try:
+        - assert:
+            file: ../core/00-assert.yaml
+
+    - name: exporter-required
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    - name: monitoring-user
+      try:
+        - script:
+            content: |
+              set -e
+              kubectl -n $NAMESPACE create secret generic test-instance-admin-password \
+                --from-literal=username=admin --from-literal=password=test-password
+              kubectl -n $NAMESPACE patch opensearchcluster/test-instance --subresource status --type merge \
+                -p '{"status":{"phase":"RUNNING","initialized":true,"health":"green","availableNodes":1,"componentsStatus":[],"version":"3.8.0"}}'
+        - assert:
+            file: 15-assert.yaml
+
+    - name: sources-published
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch opensearchuser/test-instance-monitoring --subresource status --type merge \
+                -p '{"status":{"state":"CREATED"}}'
+        - assert:
+            file: 20-assert.yaml
+
+    - name: exporter-not-required
+      try:
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              spec:
+                monitoring:
+                  sources:
+                    metrics:
+                      policy: OnDemand
+        - assert:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpenSearchCluster
+              metadata:
+                name: test-instance
+              spec:
+                general:
+                  (pluginsList == null || length(pluginsList) == `0`): true
+        - error:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpensearchUser
+              metadata:
+                name: test-instance-monitoring
+        - error:
+            resource:
+              apiVersion: opensearch.org/v1
+              kind: OpensearchRole
+              metadata:
+                name: test-instance-monitoring
+        - assert:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: test-instance
+              status:
+                (monitoring.sources.metrics == null): true
