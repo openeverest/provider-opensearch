@@ -124,28 +124,53 @@ provider:
   # used in other contexts where a short concise provider identifier is needed.
   shortName: opensearch
 
-# -- Default instance presets configuration
-# Each preset must have 'name', 'enabled', and 'spec' fields.
-# The 'spec' field contains the full InstancePresetSpec.
-# Note: The provider shortName will be automatically added to each preset name.
-presets: []
-  # Example preset structure:
-  # - name: standalone
-  #   enabled: true
-  #   spec:
-  #     provider: opensearch
-  #     version: 1.0.0
-  #     topology:
-  #       type: standalone
-  #     components:
-  #       engine:
-  #         replicas: 1
-  #         resources:
-  #           limits:
-  #             cpu: "1"
-  #             memory: 2Gi
-  #         storage:
-  #           size: 10Gi
+# -- ClusterInstancePresets the chart installs, one per topology. Each entry
+# has a `name` (prefixed with provider.shortName), `enabled` and a `spec`: the
+# InstanceSpec of an Instance created from the preset, without providerRef,
+# which the chart sets. The presets are cluster-scoped and shared by every
+# namespace, so a spec must not reference namespaced objects such as Secrets
+# or backup storages. version is the provider's default version bundle; keep
+# it in step with definition/versions.yaml (a unit test checks it). The sizes
+# are the UI defaults; optional groups (coordinators, Dashboards) stay off.
+presets:
+  - name: standard
+    enabled: true
+    spec:
+      version: "3.8.0"
+      topology:
+        type: standard
+      components:
+        engine:
+          replicas: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 4Gi
+          storage:
+            size: 25Gi
+  - name: dedicated
+    enabled: true
+    spec:
+      version: "3.8.0"
+      topology:
+        type: dedicated
+      components:
+        clusterManager:
+          replicas: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          storage:
+            size: 5Gi
+        engine:
+          replicas: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 4Gi
+          storage:
+            size: 25Gi
 
 # -- Additional environment variables to set on the provider container
 extraEnv: []
