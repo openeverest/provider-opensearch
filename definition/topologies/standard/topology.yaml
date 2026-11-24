@@ -142,7 +142,7 @@ ui:
             - resources
     tls:
       label: "TLS"
-      description: "Connections are always encrypted. Leave empty to use a certificate generated for the instance."
+      description: "Connections are always encrypted. Leave empty to use a certificate generated for the instance. Extra DNS names for an issued certificate (additionalNames) and external issuers (issuer.group) are set in the Instance YAML."
       components:
         certificateSecretName:
           uiType: text

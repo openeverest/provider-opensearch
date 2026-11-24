@@ -70,10 +70,10 @@ for what is planned next.
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources`; the JVM heap is half the memory request |
 | Version upgrades | ✅ | `spec.version`; the operator performs a rolling upgrade. Downgrades and jumps over more than one major version are rejected |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration`; an `opensearch.yml` fragment (YAML), merged into `additionalConfig`. Keys the provider manages (security, discovery, node, network, paths, ports) are rejected |
-| External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service; the certificate covers in-cluster names only |
+| External access | ✅ | `spec.components.engine.service`; annotations on the main service, `LoadBalancer`/`NodePort` via a separate `<name>-exposed` service; the certificate covers in-cluster names, plus `spec.parameters.tls.additionalNames` with an issuer |
 | Dashboards | ✅ | Optional `dashboards` component; see [Configuration](#configuration) |
 | Monitoring | ✅ | Metrics for ExtensionManaged monitoring classes (Prometheus, VictoriaMetrics, …) through the Prometheus exporter plugin; see [Configuration](#configuration) |
-| TLS | ✅ | Always on. The HTTP certificate is generated, or comes from a Secret or a cert-manager issuer (`spec.parameters.tls`); transport certificates are always generated. See [Configuration](#configuration) |
+| TLS | ✅ | Always on. The HTTP certificate is generated, or comes from a Secret or a cert-manager issuer (`spec.parameters.tls`), optionally with additional DNS names; transport certificates are always generated. See [Configuration](#configuration) |
 | Custom credentials | ✅ | `spec.userSecretRef` seeds the `admin` password at creation; see [Configuration](#configuration) |
 
 Stateful workloads additionally report:
@@ -301,7 +301,8 @@ Worth knowing:
   Once a `LoadBalancer` has an address, the connection secret publishes it as `host`. The
   operator-generated HTTP certificate only covers the in-cluster names, so external clients
   must trust `<name>-ca` and skip hostname verification, or the Instance must use a custom
-  certificate that also names the external address (see TLS below).
+  certificate that also names the external address, such as an issuer with
+  `spec.parameters.tls.additionalNames` (see TLS below).
 - **Admin credentials** — set `spec.userSecretRef.name` to a Secret with a `password` key (and
   optionally `username: admin`; the operator manages only the `admin` user) to choose the
   admin password. It can only be set when the Instance is created. The provider copies the
@@ -316,14 +317,63 @@ Worth knowing:
     `<name>.<namespace>.svc` (or `<name>-client.<namespace>.svc` in `dedicated`), with
     server auth usage, verifiable with `ca.crt`. The Instance stays `Pending` with the reason
     until the Secret qualifies.
-  - `spec.parameters.tls.issuer` (`name`, `kind`: `Issuer` or `ClusterIssuer`): the provider
-    requests a cert-manager `Certificate`, `<name>-tls-http`, for the cluster's service names
-    with a PKCS#8 key. cert-manager must be installed.
+  - `spec.parameters.tls.issuer` (`name`; `kind`: `Issuer` (default) or `ClusterIssuer`;
+    `group`: `cert-manager.io` (default), or the group of an external issuer such as
+    `awspca.cert-manager.io` with its own kind): the provider requests a cert-manager
+    `Certificate`, `<name>-tls-http`, for the cluster's service names with a PKCS#8 key.
+    cert-manager must be installed.
 
-  Replacing the certificate in the Secret (or a cert-manager renewal) is picked up by the
-  nodes without a restart. Since the operator cannot sign its admin client certificate with
-  your CA, the provider keeps a CA of its own for it (`<name>-tls-admin-ca`,
-  `<name>-tls-admin`) and has the nodes trust both (`<name>-tls-http-ca`).
+  `spec.parameters.tls.additionalNames` adds DNS names (no IPs; `*.` wildcards allowed) to
+  the issued certificate, such as the external name clients connect to. It needs `issuer`:
+  it is rejected together with `certificateSecretName`, whose certificate carries its own
+  names, and with the generated certificate, which the operator issues for the in-cluster
+  names only. Unlike the certificate source, the names can be changed later. OpenSearch
+  does not hot-reload a certificate whose names changed, so on a running Instance a change
+  is a `RollingRestart` maintenance action (`tls-names-<hash>`). Once it is approved, the
+  provider updates the `Certificate`, and the nodes restart after cert-manager reissues it.
+
+  Replacing the certificate in the Secret (or a cert-manager renewal with the same names) is
+  picked up by the nodes without a restart. Since the operator cannot sign its admin client
+  certificate with your CA, the provider keeps a CA of its own for it (`<name>-tls-admin-ca`,
+  `<name>-tls-admin`) and has the nodes trust both (`<name>-tls-http-ca`). The CA that
+  verifies the certificate is published as `ca.crt` in `<name>-conn`.
+
+  **Bring your own CA.** Put your company CA in a cert-manager `ClusterIssuer`, create the
+  Instance with it and the name clients use, and point that name in DNS at the
+  `<name>-exposed` LoadBalancer:
+
+  ```yaml
+  apiVersion: cert-manager.io/v1
+  kind: ClusterIssuer
+  metadata:
+    name: company-ca
+  spec:
+    ca:
+      secretName: company-ca   # tls.crt and tls.key of the CA, in cert-manager's namespace
+  ---
+  apiVersion: core.openeverest.io/v1alpha1
+  kind: Instance
+  metadata:
+    name: search
+  spec:
+    providerRef:
+      name: opensearch
+    parameters:
+      tls:
+        issuer:
+          name: company-ca
+          kind: ClusterIssuer
+        additionalNames:
+          - search.company.com
+    components:
+      engine:
+        replicas: 3
+        service:
+          serviceType: LoadBalancer
+  ```
+
+  Clients then verify `https://search.company.com:9200` with the company CA. See
+  [`examples/instance-tls-issuer.yaml`](examples/instance-tls-issuer.yaml).
 - **Node drains** — every Instance gets a `PodDisruptionBudget`, `<name>-nodes-pdb`, with
   `maxUnavailable: 1`. Draining Kubernetes nodes (upgrades, autoscaler) therefore evicts one
   OpenSearch node at a time and a 3-node cluster keeps its cluster-manager quorum; a 1-node

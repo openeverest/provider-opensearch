@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -126,9 +127,23 @@ func (p *Provider) Sync(c *controller.Context) error {
 	if err != nil {
 		return err
 	}
-	customHTTP, err := syncHTTPCertificate(c, tlsParams, topology)
+	names, err := appliedAdditionalNames(c, tlsParams, topology, exists)
 	if err != nil {
 		return err
+	}
+	customHTTP, err := syncHTTPCertificate(c, tlsParams, topology, names)
+	if err != nil {
+		return err
+	}
+	served, err := servedAdditionalNames(c, tlsParams, topology)
+	if err != nil {
+		return err
+	}
+	// Without additional names there is no restart annotation, so instances
+	// without them don't restart when the provider is upgraded.
+	tlsNames := ""
+	if len(served) > 0 {
+		tlsNames = namesHash(served)
 	}
 	adminCredentials, err := ensureAdminCredentials(c)
 	if err != nil {
@@ -151,6 +166,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 			customHTTP:       customHTTP,
 			adminCredentials: adminCredentials,
 			exporter:         exporter,
+			tlsNames:         tlsNames,
 		}),
 	}
 
@@ -190,7 +206,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		DashboardsEnabled bool                              `json:"dashboardsEnabled,omitempty"`
 		// Monitoring destinations that need metrics turn the exporter on.
 		Exporter bool `json:"exporter,omitempty"`
-	}{snapshotRepos, keystore, cluster.Spec.Dashboards.Enable, exporter}
+		// The restart for a reissued certificate follows an approved
+		// change of spec.parameters.tls.additionalNames.
+		TLSNames string `json:"tlsNames,omitempty"`
+	}{snapshotRepos, keystore, cluster.Spec.Dashboards.Enable, exporter, tlsNames}
 	if err := applyClusterGated(c, cluster, exists, otherInputs); err != nil {
 		return err
 	}
@@ -229,6 +248,11 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
+	// cert-manager reissues the certificate asynchronously, and its Secret
+	// is not watched.
+	if !slices.Equal(served, names) {
+		return controller.WaitFor("Waiting for cert-manager to reissue the HTTP certificate for spec.parameters.tls.additionalNames")
+	}
 	return nil
 }
 

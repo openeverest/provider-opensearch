@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -56,12 +58,18 @@ func newTestCA(t *testing.T) testCA {
 // ca, its key in PKCS#8 unless pkcs1 is set.
 func (ca testCA) serverSecret(t *testing.T, name, host string, pkcs1 bool) *corev1.Secret {
 	t.Helper()
+	return ca.serverSecretFor(t, name, []string{host}, pkcs1)
+}
+
+// serverSecretFor is serverSecret for a certificate with several names.
+func (ca testCA) serverSecretFor(t *testing.T, name string, dnsNames []string, pkcs1 bool) *corev1.Secret {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	template := &x509.Certificate{
 		SerialNumber: randomSerial(),
-		Subject:      pkix.Name{CommonName: host},
-		DNSNames:     []string{host},
+		Subject:      pkix.Name{CommonName: dnsNames[0]},
+		DNSNames:     dnsNames,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -291,6 +299,8 @@ func TestValidateReferencesSecurity(t *testing.T) {
 			want: []string{"spec.parameters.tls.certificateSecretName"}},
 		{name: "issuer not found", in: withParameters(testInstance(validEngine()), `{"tls":{"issuer":{"name":"ca"}}}`),
 			want: []string{"spec.parameters.tls.issuer.name"}},
+		{name: "external issuer is not looked up", in: withParameters(testInstance(validEngine()),
+			`{"tls":{"issuer":{"name":"pca","kind":"AWSPCAClusterIssuer","group":"awspca.cert-manager.io"}}}`)},
 		{name: "user secret", in: withUser(testInstance(validEngine())),
 			objs: []client.Object{userSecret(map[string]string{"username": "admin", "password": "p"})}},
 		{name: "user secret missing", in: withUser(testInstance(validEngine())),
@@ -325,4 +335,126 @@ func TestValidateReferencesSecurity(t *testing.T) {
 			assert.Equal(t, tt.want, fieldsOf(errs), "errors: %v", errs)
 		})
 	}
+}
+
+func TestSyncAdditionalNames(t *testing.T) {
+	ctx := t.Context()
+	ca := newTestCA(t)
+	key := client.ObjectKey{Namespace: testNamespace, Name: testName}
+	params := func(names ...string) string {
+		raw, err := json.Marshal(map[string]any{"tls": map[string]any{
+			"issuer":          map[string]any{"name": "ca", "kind": "ClusterIssuer"},
+			"additionalNames": names,
+		}})
+		require.NoError(t, err)
+		return string(raw)
+	}
+	certificate := func(t *testing.T, cl client.Client) *unstructured.Unstructured {
+		t.Helper()
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(certificateGVK)
+		require.NoError(t, cl.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: issuedCertificateName(testName)}, cert))
+		return cert
+	}
+	certNames := func(t *testing.T, cl client.Client) []string {
+		t.Helper()
+		names, _, _ := unstructured.NestedStringSlice(certificate(t, cl).Object, "spec", "dnsNames")
+		return names
+	}
+	// issue plays cert-manager, writing the certificate the Certificate asks for.
+	issue := func(t *testing.T, cl client.Client) {
+		t.Helper()
+		secret := ca.serverSecretFor(t, issuedCertificateName(testName), certNames(t, cl), false)
+		existing := &corev1.Secret{}
+		if err := cl.Get(ctx, client.ObjectKeyFromObject(secret), existing); err == nil {
+			existing.Data = secret.Data
+			require.NoError(t, cl.Update(ctx, existing))
+			return
+		}
+		require.NoError(t, cl.Create(ctx, secret))
+	}
+	restartAnnotation := func(t *testing.T, cl client.Client) string {
+		t.Helper()
+		cluster := &opensearchv1.OpenSearchCluster{}
+		require.NoError(t, cl.Get(ctx, key, cluster))
+		return cluster.Spec.NodePools[0].Annotations[tlsNamesAnnotation]
+	}
+	syncStored := func(t *testing.T, cl client.Client) (*controller.Context, error) {
+		t.Helper()
+		in := &corev1alpha1.Instance{}
+		require.NoError(t, cl.Get(ctx, key, in))
+		c := controller.NewContext(ctx, cl, in, common.ProviderName)
+		return c, New().Sync(c)
+	}
+	updateInstance := func(t *testing.T, cl client.Client, mutate func(*corev1alpha1.Instance)) {
+		t.Helper()
+		in := &corev1alpha1.Instance{}
+		require.NoError(t, cl.Get(ctx, key, in))
+		mutate(in)
+		require.NoError(t, cl.Update(ctx, in))
+	}
+	var wait *controller.WaitError
+
+	t.Run("without names the nodes carry no restart annotation", func(t *testing.T) {
+		c, cl := newTestContext(t, withParameters(testInstance(validEngine()), `{"tls":{"issuer":{"name":"ca"}}}`))
+		require.ErrorAs(t, New().Sync(c), &wait)
+		issue(t, cl)
+		_, err := syncStored(t, cl)
+		require.NoError(t, err)
+		assert.Empty(t, restartAnnotation(t, cl))
+	})
+
+	c, cl := newTestContext(t, withParameters(testInstance(validEngine()), params("b.example.com", "a.example.com")))
+	require.ErrorAs(t, New().Sync(c), &wait)
+	assert.Subset(t, certNames(t, cl), []string{"a.example.com", "b.example.com"}, "a new instance takes the names right away")
+	assert.Subset(t, certNames(t, cl), certificateDNSNames(testName, testNamespace, common.TopologyStandard))
+	issuerRef, _, _ := unstructured.NestedStringMap(certificate(t, cl).Object, "spec", "issuerRef")
+	assert.Equal(t, map[string]string{"group": "cert-manager.io", "kind": "ClusterIssuer", "name": "ca"}, issuerRef)
+	issue(t, cl)
+	_, err := syncStored(t, cl)
+	require.NoError(t, err)
+	created := restartAnnotation(t, cl)
+	assert.Equal(t, namesHash([]string{"a.example.com", "b.example.com"}), created)
+
+	updateInstance(t, cl, func(in *corev1alpha1.Instance) {
+		in.Spec.Parameters.Raw = []byte(params("c.example.com"))
+	})
+	c, err = syncStored(t, cl)
+	require.NoError(t, err)
+	pending := c.GetPendingMaintenance()
+	require.Len(t, pending, 1, "a change on a running instance waits for approval")
+	assert.Equal(t, "tls-names-"+namesHash([]string{"c.example.com"}), pending[0].ApprovalToken)
+	assert.Equal(t, controller.MaintenanceRollingRestart, pending[0].Severity)
+	assert.Contains(t, certNames(t, cl), "a.example.com")
+	assert.NotContains(t, certNames(t, cl), "c.example.com")
+	assert.Equal(t, created, restartAnnotation(t, cl))
+
+	updateInstance(t, cl, func(in *corev1alpha1.Instance) {
+		in.Spec.Maintenance = &corev1alpha1.MaintenanceSpec{Approved: pending[0].ApprovalToken}
+	})
+	_, err = syncStored(t, cl)
+	require.ErrorAs(t, err, &wait, "waits for cert-manager to reissue the certificate")
+	assert.Contains(t, certNames(t, cl), "c.example.com")
+	assert.NotContains(t, certNames(t, cl), "a.example.com")
+	assert.Equal(t, created, restartAnnotation(t, cl), "the nodes restart only once the certificate carries the names")
+
+	issue(t, cl)
+	c, err = syncStored(t, cl)
+	require.NoError(t, err)
+	assert.Equal(t, namesHash([]string{"c.example.com"}), restartAnnotation(t, cl))
+	assert.Empty(t, c.GetPendingMaintenance())
+}
+
+func TestSyncExternalIssuer(t *testing.T) {
+	in := withParameters(testInstance(validEngine()),
+		`{"tls":{"issuer":{"name":"pca","kind":"AWSPCAClusterIssuer","group":"awspca.cert-manager.io"}}}`)
+	c, cl := newTestContext(t, in)
+	var wait *controller.WaitError
+	require.ErrorAs(t, New().Sync(c), &wait)
+
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certificateGVK)
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKey{Namespace: testNamespace, Name: issuedCertificateName(testName)}, cert))
+	issuerRef, _, _ := unstructured.NestedStringMap(cert.Object, "spec", "issuerRef")
+	assert.Equal(t, map[string]string{"group": "awspca.cert-manager.io", "kind": "AWSPCAClusterIssuer", "name": "pca"}, issuerRef)
 }
