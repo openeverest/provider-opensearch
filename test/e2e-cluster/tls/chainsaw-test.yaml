@@ -172,8 +172,24 @@ spec:
               token=$(kubectl -n $NAMESPACE get instance tls-issuer \
                 -o jsonpath='{.status.pendingMaintenance[0].approvalToken}')
               test -n "$token"
+              annotation() {
+                kubectl -n $NAMESPACE get opensearchcluster tls-issuer \
+                  -o jsonpath='{.spec.nodePools[0].annotations.opensearch\.openeverest\.io/tls-names}'
+              }
+              before=$(annotation)
               kubectl -n $NAMESPACE patch instance tls-issuer --type merge \
                 -p "{\"spec\":{\"maintenance\":{\"approved\":\"$token\"}}}"
+              # Once cert-manager has reissued the certificate, the provider
+              # changes the node pool's restart annotation. The operator's
+              # rolling restart never restarts a single cluster manager
+              # (fixed upstream in opensearch-k8s-operator#1623, not in the
+              # pinned release), so the suite restarts the one node itself.
+              for _ in $(seq 60); do
+                [ "$(annotation)" != "$before" ] && break
+                sleep 5
+              done
+              [ "$(annotation)" != "$before" ] || { echo "restart annotation unchanged: $before"; exit 1; }
+              kubectl -n $NAMESPACE delete pod tls-issuer-nodes-0
               for _ in $(seq 160); do
                 if OPENSEARCH_NAME=search-b.e2e.test ../lib/opensearch.sh tls-issuer GET /_cluster/health >/dev/null 2>&1; then
                   echo "search-b.e2e.test is served"

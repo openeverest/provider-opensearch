@@ -331,6 +331,8 @@ Worth knowing:
   does not hot-reload a certificate whose names changed, so on a running Instance a change
   is a `RollingRestart` maintenance action (`tls-names-<hash>`). Once it is approved, the
   provider updates the `Certificate`, and the nodes restart after cert-manager reissues it.
+  The operator's rolling restart does not restart a 1-node Instance, as with any change that
+  needs a restart: delete its pod (`<name>-nodes-0`) to serve the new names.
 
   Replacing the certificate in the Secret (or a cert-manager renewal with the same names) is
   picked up by the nodes without a restart. Since the operator cannot sign its admin client
