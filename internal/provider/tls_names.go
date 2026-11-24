@@ -27,7 +27,8 @@ func appliedAdditionalNames(c *controller.Context, t definition.TLSParameters, t
 	if t.Issuer == nil {
 		return nil, nil
 	}
-	desired := additionalNames(t)
+	own := certificateDNSNames(c.Name(), c.Namespace(), topology)
+	desired := extraNames(t.AdditionalNames, own)
 	if !running {
 		return desired, nil
 	}
@@ -41,7 +42,7 @@ func appliedAdditionalNames(c *controller.Context, t definition.TLSParameters, t
 		return nil, fmt.Errorf("get certificate %q: %w", key.Name, err)
 	}
 	dnsNames, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
-	recorded := extraNames(dnsNames, certificateDNSNames(c.Name(), c.Namespace(), topology))
+	recorded := extraNames(dnsNames, own)
 	if slices.Equal(desired, recorded) {
 		return desired, nil
 	}

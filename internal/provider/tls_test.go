@@ -443,6 +443,14 @@ func TestSyncAdditionalNames(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, namesHash([]string{"c.example.com"}), restartAnnotation(t, cl))
 	assert.Empty(t, c.GetPendingMaintenance())
+
+	own := certificateDNSNames(testName, testNamespace, common.TopologyStandard)[0]
+	updateInstance(t, cl, func(in *corev1alpha1.Instance) {
+		in.Spec.Parameters.Raw = []byte(params("c.example.com", own, "c.example.com"))
+	})
+	c, err = syncStored(t, cl)
+	require.NoError(t, err, "an instance's own name or a repeated one is no change")
+	assert.Empty(t, c.GetPendingMaintenance())
 }
 
 func TestSyncExternalIssuer(t *testing.T) {
