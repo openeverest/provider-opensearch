@@ -1,6 +1,6 @@
 # tls-secret: the user's own HTTP certificate (certificate.sh) and admin
 # password. tls-issuer: an HTTP certificate cert-manager issues from the "ca"
-# Issuer.
+# Issuer, also for an external name.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -42,6 +42,8 @@ spec:
       issuer:
         kind: Issuer
         name: ca
+      additionalNames:
+        - search-a.e2e.test
   components:
     engine:
       replicas: 1

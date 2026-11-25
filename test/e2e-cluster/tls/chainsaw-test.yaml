@@ -12,7 +12,9 @@ spec:
   description: |
     Instances with a user-supplied and an issued HTTP certificate reach Ready,
     clients connect with the published CA and the custom admin password, and
-    a renewed certificate is served without restarting OpenSearch.
+    a renewed certificate is served without restarting OpenSearch. Additional
+    names are in the issued certificate, and adding one waits for maintenance
+    approval, then reissues the certificate and restarts the nodes.
 
   catch:
     - script:
@@ -117,3 +119,102 @@ spec:
             check:
               ($error == null): true
               (json_parse($stdout).status): green
+
+    - name: additional-names
+      try:
+        - script:
+            timeout: 2m
+            env:
+              - name: OPENSEARCH_NAME
+                value: search-a.e2e.test
+            content: ../lib/opensearch.sh tls-issuer GET /_cluster/health
+            check:
+              ($error == null): true
+              (json_parse($stdout).status): green
+        - script:
+            timeout: 2m
+            env:
+              - name: OPENSEARCH_NAME
+                value: search-b.e2e.test
+            content: ../lib/opensearch.sh tls-issuer GET /_cluster/health
+            check:
+              ($error != null): true
+        - patch:
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: tls-issuer
+              spec:
+                parameters:
+                  tls:
+                    additionalNames:
+                      - search-a.e2e.test
+                      - search-b.e2e.test
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: tls-issuer
+              status:
+                pendingMaintenance:
+                  - severity: RollingRestart
+                    (starts_with(approvalToken, 'tls-names-')): true
+
+    - name: additional-names-applied-after-approval
+      try:
+        - script:
+            timeout: 15m
+            content: |
+              set -euo pipefail
+              token=$(kubectl -n $NAMESPACE get instance tls-issuer \
+                -o jsonpath='{.status.pendingMaintenance[0].approvalToken}')
+              test -n "$token"
+              annotation() {
+                kubectl -n $NAMESPACE get opensearchcluster tls-issuer \
+                  -o jsonpath='{.spec.nodePools[0].annotations.opensearch\.openeverest\.io/tls-names}'
+              }
+              before=$(annotation)
+              kubectl -n $NAMESPACE patch instance tls-issuer --type merge \
+                -p "{\"spec\":{\"maintenance\":{\"approved\":\"$token\"}}}"
+              # Once cert-manager has reissued the certificate, the provider
+              # changes the node pool's restart annotation. The operator's
+              # rolling restart never restarts a single cluster manager
+              # (fixed upstream in opensearch-k8s-operator#1623, not in the
+              # pinned release), so the suite restarts the one node itself.
+              for _ in $(seq 60); do
+                [ "$(annotation)" != "$before" ] && break
+                sleep 5
+              done
+              [ "$(annotation)" != "$before" ] || { echo "restart annotation unchanged: $before"; exit 1; }
+              kubectl -n $NAMESPACE delete pod tls-issuer-nodes-0
+              for _ in $(seq 160); do
+                if OPENSEARCH_NAME=search-b.e2e.test ../lib/opensearch.sh tls-issuer GET /_cluster/health >/dev/null 2>&1; then
+                  echo "search-b.e2e.test is served"
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "search-b.e2e.test is still not served"
+              exit 1
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: tls-issuer
+              status:
+                phase: Provisioned
+                (conditions[?type == 'Ready'].status | [0]): "True"
+                (length(pendingMaintenance || `[]`)): 0
+        - script:
+            timeout: 2m
+            env:
+              - name: OPENSEARCH_NAME
+                value: search-a.e2e.test
+            content: ../lib/opensearch.sh tls-issuer GET /_cluster/health
+            check:
+              ($error == null): true

@@ -60,6 +60,11 @@ func TestValidate(t *testing.T) {
 		{fixture: "tls-issuer.yaml"},
 		{fixture: "tls-both.yaml", want: []string{"spec.parameters.tls.issuer"}},
 		{fixture: "tls-bad-kind.yaml", want: []string{"spec.parameters.tls.issuer.kind"}},
+		{fixture: "tls-issuer-external.yaml"},
+		{fixture: "tls-issuer-names.yaml"},
+		{fixture: "tls-names-without-issuer.yaml", want: []string{"spec.parameters.tls.additionalNames"}},
+		{fixture: "tls-secret-names.yaml", want: []string{"spec.parameters.tls.additionalNames"}},
+		{fixture: "tls-names-invalid.yaml", want: []string{"spec.parameters.tls.additionalNames[0]", "spec.parameters.tls.additionalNames[1]"}},
 		{fixture: "user-secret.yaml"},
 
 		// Dedicated topology.
@@ -91,6 +96,10 @@ func TestValidate(t *testing.T) {
 		{fixture: "tls-secret.yaml", old: "minimal.yaml", want: []string{"spec.parameters.tls"}},
 		{fixture: "minimal.yaml", old: "tls-issuer.yaml", want: []string{"spec.parameters.tls"}},
 		{fixture: "tls-issuer.yaml", old: "tls-secret.yaml", want: []string{"spec.parameters.tls"}},
+		{fixture: "tls-issuer-names.yaml", old: "tls-issuer.yaml"},
+		{fixture: "tls-issuer.yaml", old: "tls-issuer-names.yaml"},
+		{fixture: "tls-issuer-cert-manager-group.yaml", old: "tls-issuer.yaml"},
+		{fixture: "tls-issuer-external.yaml", old: "tls-issuer.yaml", want: []string{"spec.parameters.tls"}},
 		{fixture: "user-secret.yaml", old: "user-secret.yaml"},
 		{fixture: "user-secret.yaml", old: "minimal.yaml", want: []string{"spec.userSecretRef"}},
 	}

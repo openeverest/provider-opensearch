@@ -152,6 +152,9 @@ type clusterInputs struct {
 	// exporter runs the Prometheus exporter plugin on every node, and labels
 	// the pods with the Instance so its metrics endpoints can select them.
 	exporter bool
+	// tlsNames fingerprints the additional names of the served HTTP
+	// certificate; a change restarts the nodes to load it.
+	tlsNames string
 }
 
 // buildClusterSpec maps the OpenSearch components of an Instance onto an
@@ -198,6 +201,9 @@ func buildClusterSpec(in clusterInputs) opensearchv1.ClusterSpec {
 		pool := buildNodePool(in.name, def, component, in.configs[def.component])
 		if in.exporter {
 			pool.Labels = map[string]string{controller.InstanceLabel: in.name}
+		}
+		if in.tlsNames != "" {
+			pool.Annotations = map[string]string{tlsNamesAnnotation: in.tlsNames}
 		}
 		pools = append(pools, pool)
 	}

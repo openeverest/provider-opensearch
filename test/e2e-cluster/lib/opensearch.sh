@@ -3,7 +3,9 @@
 # (see toolbox.yaml), with what the provider publishes: host, port and
 # credentials from the <instance>-conn Secret. TLS is verified against the CA
 # it publishes in ca.crt; nothing runs with -k. OPENSEARCH_PASSWORD overrides
-# the published password.
+# the published password. OPENSEARCH_NAME addresses the Instance by another
+# name, such as one of its TLS additionalNames, still connecting to the
+# published host.
 #
 # Usage: opensearch.sh <instance> <METHOD> <path> [json-body]
 set -euo pipefail
@@ -18,10 +20,12 @@ host=$(field "$instance-conn" host)
 port=$(field "$instance-conn" port)
 username=$(field "$instance-conn" username)
 password=${OPENSEARCH_PASSWORD:-$(field "$instance-conn" password)}
+name=${OPENSEARCH_NAME:-$host}
 ca=$(kubectl -n "$NAMESPACE" get secret "$instance-conn" -o jsonpath='{.data.ca\.crt}')
 
 kubectl -n "$NAMESPACE" exec toolbox -- sh -c "echo '$ca' | base64 -d > /tmp/$instance-ca.crt"
 kubectl -n "$NAMESPACE" exec toolbox -- curl -sS --fail-with-body --max-time 60 \
   --cacert "/tmp/$instance-ca.crt" -u "$username:$password" \
+  --connect-to "$name:$port:$host:$port" \
   -X "$method" -H 'Content-Type: application/json' ${body:+-d "$body"} \
-  "https://$host:$port$path"
+  "https://$name:$port$path"
