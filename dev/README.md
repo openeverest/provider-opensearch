@@ -80,6 +80,14 @@ All settings live in `dev/.env` (see `dev/.env.example`). Common options:
 > `2.0.0-alpha.N`, so a range such as `>=2.0.0-0` would pick an older dev
 > release. `OPENEVEREST_VERSION` therefore defaults to the exact core version in
 > `go.mod`.
+>
+> While `go.mod` requires a commit of core `main` whose contract has changed since
+> the last release, the chart's stamp is a development value, such as
+> `2.0.0-alpha.1.next`, and no released core serves this provider: the chart
+> refuses to install on one, and the provider would stay unready there. Run the
+> core from that commit instead (the pseudo-version of
+> `github.com/openeverest/openeverest/v2` in `go.mod` ends with it), as described
+> below.
 
 ## Developing the core and the provider together
 
