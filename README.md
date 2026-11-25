@@ -57,6 +57,11 @@ so a range would also claim the older dev releases. `0.3.x` needs the class-base
 Instance status of `2.0.0-alpha.1`; install it with that core on a fresh cluster, as there is
 no upgrade path from `0.2.x`.
 
+Each chart also names the OpenEverest it is built for, in the `openeverest.io/contract-version`
+annotation of its `Chart.yaml`, which `make generate` writes. A Helm install on an OpenEverest
+that does not serve that version fails, and a build applied any other way waits, unready,
+until OpenEverest serves it; see [Installation](#installation).
+
 ## Capabilities
 
 What you can do to a running instance through the `Instance` API. Upgrading the
@@ -112,6 +117,26 @@ helm install provider-opensearch \
   `opensearch-dedicated`, with the UI's default sizes on the default version. Change or disable
   them under `presets` in the chart values. Presets are cluster-scoped, so they reference no
   Secrets or backup storages; teams publish their own as namespaced `InstancePreset`s.
+
+With Helm or Flux, the install fails, before anything is applied, when the OpenEverest in the
+cluster does not serve the OpenEverest the chart is built for, and the error names the
+OpenEverest it needs. Argo CD, and any tool that applies pre-rendered manifests, renders the
+chart without reading the cluster, so that check passes there. Whichever tool applies it, a new
+build of the provider that the installed OpenEverest does not support stays running but unready
+until OpenEverest does, with a Warning Event on the `Provider` that says why (see
+[Troubleshooting](#troubleshooting)). Under the chart's default `RollingUpdate` strategy, the
+previous build, if any, keeps serving meanwhile.
+
+To install anyway, set `compatibility.acknowledge.coreVersion` to the OpenEverest version the
+cluster runs, which the error also names. The chart writes it on the `Provider`, its
+`BackupClass` and the presets as `openeverest.io/compatibility-acknowledged`, and the provider
+reads it on its `Provider` at startup, so it lets a held build start too. It holds on that
+release and on later ones that keep its contract, such as its patch releases, and expires with
+the first OpenEverest release that changes the contract, which is checked again.
+
+The chart sets no annotation for any tool itself: `openeverest.annotations` adds annotations to
+the `Provider`, its `BackupClass` and the presets, such as `argocd.argoproj.io/sync-wave: "-1"`
+to have Argo CD apply them before the provider's `Deployment` and the bundled operator.
 
 Upgrade and uninstall:
 
@@ -449,15 +474,16 @@ local k3d setup, running against a cluster you already have, and every `dev/.env
 
 ```bash
 make dev-up             # local cluster + Tilt dev environment (see dev/README.md)
-make generate           # RBAC, provider spec, Helm chart sync
+make generate           # RBAC, provider spec, Helm chart sync, OpenEverest stamp
 make run                # run the provider locally against the cluster
 make test-unit
 make test-integration   # chainsaw suites under test/integration/
 make dev-down
 ```
 
-`make help` lists every target. `make verify` fails when generated files are stale — run
-`make generate` and commit the result.
+`make help` lists every target. `make verify` fails when generated files are stale or the
+chart is not stamped with the OpenEverest the provider is built against — run `make generate`
+and commit the result.
 
 The provider contract (`Validate` / `Sync` / `Status` / `Cleanup`), RBAC markers, watches,
 code generation, and the backup/restore interfaces are documented once for all providers in
@@ -471,7 +497,7 @@ code generation, and the backup/restore interfaces are documented once for all p
 | `internal/provider/` | `ProviderInterface` implementation, backup interfaces, RBAC markers |
 | `internal/common/` | Component name constants |
 | `definition/` | Provider identity, component types, versions, topologies, backup classes |
-| `charts/provider-opensearch/` | Helm chart (`generated/` is produced by `make generate`) |
+| `charts/provider-opensearch/` | Helm chart (`generated/`, the `Chart.yaml` stamp, `templates/_openeverest_contract.tpl` and `templates/openeverest-compat-check.yaml` are produced by `make generate`) |
 | `config/rbac/role.yaml` | Generated `ClusterRole` — do not edit |
 | `test/integration/` | Chainsaw suites (see its `README.md`) |
 | `test/vars.sh` | Pinned operator and workload versions used by tests |
@@ -501,6 +527,7 @@ kubectl logs -n everest-system deploy/provider-opensearch -f
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
 | `helm upgrade` fails with `pre-upgrade hooks failed` | `kubectl logs -n everest-system job/provider-opensearch-preflight` names the blocking Instance; wait for its upgrade or restart to finish and retry |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `opensearch` |
+| New provider pod running but never `Ready` | It waits until the installed OpenEverest supports this build: the Warning Event in `kubectl describe provider opensearch` says why |
 | Operator resource created but no pods | `kubectl get opensearchcluster <name> -o yaml` — the failure is upstream; check the operator logs |
 | `kubectl drain` waits on `Cannot evict pod as it would violate the pod's disruption budget` | Another OpenSearch node of the Instance is not ready yet; the drain continues once it is |
 | Pods crash with `max virtual memory areas vm.max_map_count` | The operator sets it through a privileged init container; the cluster's pod security settings must allow it |
